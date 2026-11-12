@@ -108,6 +108,16 @@ verifies a token itself: the reference auth server `moq auth serve` does**, and 
   which clients race automatically and the relay serves from `[web.https]` (TCP). The docs say it cannot escape
   head-of-line blocking.
 
+### How the interface loads them (0.1.1)
+
+The interface inside Ferrum (`ui/`) bundles `@moq/watch/element` and `@moq/publish/element` (and `@moq/publish/support`, moq's capability probe) at the
+versions above as lazy chunks, so the shell's policy (`script-src 'self'`) holds and nothing comes from a CDN. It draws whatever element the
+server's offer names (`Relay::element`), sets only `name` and `url` (the address with the token) and the offer's fixed attributes, and reads from the
+element the properties the 0.6.6/0.5.6 typings list: `paused`, `muted`, `volume` and `captions`; the caption renditions in `text.out.available`; the
+reconnecting connection's `connection.status`; and `sources.video`/`sources.audio` → `device.preferred` to choose the camera and microphone. A changed `url` is how a
+renewed token is applied. `@kixelated/libavjs-webcodecs-polyfill` (pulled in by `@moq/hang`) holds a jsDelivr address in a branch moq does not take (it hands the polyfill its own bundled
+Opus variant); the build copies that variant's two WebAssembly files beside its chunk. None of this has met a browser with a relay.
+
 ## The gateways
 
 All are the `moq` CLI, each bridging **one** broadcast (`--broadcast`) to a relay URL (`--connect`, whose path
