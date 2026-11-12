@@ -1,6 +1,6 @@
 id: live
 name: Live
-version: 0.1.0
+version: 0.1.1
 publisher: cbferrum
 summary: "One-to-many live video at low delay through a Media over QUIC relay: broadcasts attached to any record, signed short-lived access, embeddable player, viewer counts"
 description: README.md
@@ -12,10 +12,27 @@ runtime: native
 platform: ">=0.3.2, <0.4"
 packages: [live]
 uninstall: ask
-# No interface of its own yet: Ferrum's records screens (a launcher entry at /data/live/) carry the
-# broadcasts, their links and the settings; the watch page and the publish page are served by the app
-# itself at /api/site/{workspace}/live/ (README, "Routes").
+# Its own interface at /live/ (Ferrum docs/plan/apps-ui.md): the broadcasts, a presenter's control page, the
+# watch page for signed-in people, planning one, and Live Settings (ui/, built into ui/dist). The two moq
+# components are bundled in it as lazy chunks: no page loads a script from outside. The pages for people with
+# no account (a viewing link, a presenter link, a public broadcast) stay the app's own, at /api/site/{workspace}/live/.
+# Browsers inside Ferrum may connect to the relay only at the address of the setting below, which an
+# administrator sets to the address Live Settings names (README, "The interface").
+settings:
+  - {key: relay_url, label: Relay address for browsers, type: text, description: "The same address as Relay Address in Live Settings, https://host: the screens inside Ferrum may open their connection to the relay only there"}
+ui:
+  dist: ui/dist
+  csp:
+    connect: ["setting:relay_url"]
 contributes:
+  shell.app:
+    - {id: live, route: live, title: Live, description: Broadcasts to a large audience at low delay, icon: video, color: "#be123c", roles: [Live User, Live Manager]}
+  shell.open:
+    # A broadcast opens on its control page; its other records, in the frame.
+    - {id: broadcast, entity: Broadcast, path: "live/b/{id}", list: live/, priority: 1}
+    - {id: live, package: live, path: "live/e/{entity}/{id}", list: "live/e/{entity}"}
+  shell.create:
+    - {id: broadcast, label: Broadcast, path: live/new, entity: Broadcast}
   shell.assistant:
     - id: live
       title: "Live"

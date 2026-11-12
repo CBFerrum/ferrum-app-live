@@ -31,7 +31,9 @@ relay's public name, and `keys/<kid>.jwk`.
    Ferrum share the secret. Paste the file's text into **Set Signing Key**.
 2. **Live Settings** (in the app): *Relay Address* `https://live.example.com`, *Relay Health Address*
    `http://live-relay:8080/health` (as the server reaches it), then **Set Signing Key** with the same key text. The
-   app seals it and never shows it again; it shows only the key's name.
+   app seals it and never shows it again; it shows only the key's name. Then set the same address in the app's own
+   settings (*Relay address for browsers*): the interface inside Ferrum may open its connection to the relay only
+   at the address that setting names (the manifest's `ui.csp.connect`).
 3. **Certificate.** A publicly trusted one for the name (browsers do not accept a self-signed certificate for
    WebTransport unless pinned). The relay watches the files and reloads them.
 4. **Host.** Raise the UDP buffers on the Docker host (`net.core.rmem_max` and `wmem_max` = 8388608); the relay

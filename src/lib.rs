@@ -14,6 +14,7 @@ mod access;
 mod broadcast;
 mod health;
 mod links;
+mod module;
 mod page;
 pub mod relay;
 mod reports;
@@ -31,6 +32,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 include!(concat!(env!("OUT_DIR"), "/packages.rs"));
+include!(concat!(env!("OUT_DIR"), "/ui.rs"));
 
 /// This app's manifest (`app.yaml`).
 pub const MANIFEST: &str = include_str!("../app.yaml");

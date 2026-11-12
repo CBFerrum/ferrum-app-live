@@ -486,18 +486,39 @@ async fn scenario() {
     let csp = header(&page, "content-security-policy");
     assert!(csp.contains("frame-ancestors https://shop.example.com https://school.example.org"), "{csp}");
     assert!(csp.contains("connect-src 'self' https://relay.example.com wss://relay.example.com"), "{csp}");
-    assert!(csp.contains("script-src 'nonce-") && csp.contains("https://esm.sh"), "{csp}");
+    // With default settings the page references no origin but its own and the relay's: the component is the app's own file.
+    assert!(csp.contains("script-src 'nonce-") && csp.contains("'wasm-unsafe-eval' 'self';"), "{csp}");
+    let origins: Vec<&str> = csp.split_whitespace().filter(|w| w.starts_with("http") || w.starts_with("ws")).collect();
+    assert!(origins.iter().all(|o| o.contains("relay.example.com") || o.contains("shop.example.com") || o.contains("school.example.org")), "{csp}");
+    assert!(!csp.contains('*') && !csp.contains("esm.sh"), "{csp}");
     assert!(csp.contains("default-src 'none'") && !csp.contains("'unsafe-eval'"), "{csp}");
     assert_eq!((header(&page, "cache-control").as_str(), header(&page, "referrer-policy").as_str()), ("no-store", "no-referrer"));
     let html = String::from_utf8(page.body.clone()).unwrap();
-    assert!(html.contains("@moq/watch@0.6.6/element") && !html.contains("key-1"), "the page names the pinned player and holds no secret");
+    assert!(
+        html.contains("\"moq-watch-0.6.6.js\"") && !html.contains("esm.sh") && !html.contains("key-1"),
+        "the page names the bundled player and holds no secret"
+    );
+    let module = t.raw(&acme, None, "GET", "/module/moq-watch-0.6.6.js", Value::Null, Value::Null).await.unwrap();
+    assert_eq!((module.status, module.content_type.as_str()), (200, "text/javascript; charset=utf-8"));
+    assert!(header(&module, "cache-control").contains("immutable") && !module.body.is_empty());
+    assert!(
+        String::from_utf8(t.raw(&acme, None, "GET", "/module/moq-publish-0.5.6.js", Value::Null, Value::Null).await.unwrap().body).unwrap().contains("import")
+    );
+    for other in ["index.html", "words.json", "../index.html", "main-nothing.js"] {
+        refused(t.raw(&acme, None, "GET", &format!("/module/{other}"), Value::Null, Value::Null).await, "not found");
+    }
+    // A workspace may serve the component from elsewhere: then that origin, and only it, is allowed to run script.
+    k.update(&mira, "LiveSettings", set, obj(json!({"player_module_url": "https://cdn.example.net/moq/watch.js"})), None).await.unwrap();
+    let own = t.raw(&acme, None, "GET", &format!("/watch/{live}"), Value::Null, Value::Null).await.unwrap();
+    assert!(header(&own, "content-security-policy").contains("'wasm-unsafe-eval' https://cdn.example.net;"), "{}", header(&own, "content-security-policy"));
+    k.update(&mira, "LiveSettings", set, obj(json!({"player_module_url": null})), None).await.unwrap();
     let plain = t.raw(&acme, None, "GET", &format!("/watch/{live}"), Value::Null, Value::Null).await.unwrap();
     assert!(header(&plain, "content-security-policy").contains("frame-ancestors 'none'"), "no frames unless the broadcast names them");
     let stranger = t.raw(&acme, None, "GET", &format!("/watch/{}", Uuid::now_v7()), Value::Null, Value::Null).await.unwrap();
     assert_eq!(stranger.status, 200, "the page is the same for any id");
     assert!(header(&stranger, "content-security-policy").contains("frame-ancestors 'none'"));
     let presenter_page = t.raw(&acme, None, "GET", &format!("/present/{live}"), Value::Null, Value::Null).await.unwrap();
-    assert!(String::from_utf8(presenter_page.body).unwrap().contains("@moq/publish@0.5.6/element"));
+    assert!(String::from_utf8(presenter_page.body).unwrap().contains("moq-publish-0.5.6.js"));
     refused(t.raw(&acme, None, "GET", "/watch/not-an-id", Value::Null, Value::Null).await, "not found");
     // The embed description another app uses: a broadcast about its record, only for those who may watch.
     let (_, listed) = t.call(&acme, Some(&asha), "GET", "/embed", json!({"entity": "Broadcast", "record": private.to_string()}), Value::Null).await.unwrap();
