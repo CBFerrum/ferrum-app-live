@@ -1,0 +1,123 @@
+- name: LiveSettings
+  label: Live Settings
+  kind: settings
+  module: live
+  fields:
+    - {name: relay_url, type: url, label: Relay Address, description: "The relay as browsers reach it, for example https://live.example.com (HTTPS: WebTransport over QUIC on UDP, a WebSocket on TCP for browsers without it)"}
+    - {name: relay_check_url, type: url, label: Relay Health Address, description: "Where this server asks whether the relay answers (the relay's /health); empty = the relay address with /health"}
+    - {name: signing_key, type: secret, read_only: true, hidden: true, description: "The relay's signing key (a JWK, HS256). Written by Set Signing Key, never shown"}
+    - {name: signing_key_id, type: data, read_only: true, description: "Name (kid) of the key tokens are signed with; the relay's key directory holds a file of that name"}
+    - {name: key_changed_at, type: datetime, read_only: true}
+    - {name: path_prefix, type: data, default: live, max_length: 40, description: "The first part of every broadcast's path on the relay (letters, digits, dash, underscore)"}
+    - {name: stream_name, type: data, default: live.hang, max_length: 60, description: "The name the presenter's stream has under the broadcast's path (the catalog format follows its suffix)"}
+    - {name: watch_token_minutes, type: int, default: 10, min: 1, max: 60, description: "How long a viewer's token lives. The relay ends a session at its token's expiry, so a player renews it before then"}
+    - {name: publish_token_minutes, type: int, default: 60, min: 5, max: 720, description: "How long a presenter's token lives (the stream is cut at its expiry unless renewed first)"}
+    - {name: default_audience, type: select, options: [Members, Portal, Link, Public], default: Members, description: "Who may watch a broadcast that names no audience. Each includes the ones before it: Members (signed-in people), Portal (and portal people), Link (and anyone with a viewing link), Public (anyone)"}
+    - {name: default_capacity, type: int, default: 0, min: 0, description: "Viewers at once, for a broadcast that names none; 0 = no limit"}
+    - {name: recording_default, type: check, default: false, description: "Whether broadcasts are recorded when they say nothing. Needs a recorder beside the relay: see docs/moq.md"}
+    - {name: replay_base_url, type: url, label: Replay Address, description: "Where recorded HLS segments are served from; an ended broadcast's replay link is this address, the broadcast's path and master.m3u8"}
+    - {name: retention_days, type: int, default: 30, min: 1, max: 3650, description: "Days an ended broadcast keeps its replay link, its links and its counts' seats; upkeep clears them after that"}
+    - {name: player_module_url, type: url, label: Watch Component, default: "https://esm.sh/@moq/watch@0.6.6/element", description: "The script that defines the player element, pinned to the version this app was built against. Self-host it to keep third parties off your pages"}
+    - {name: publisher_module_url, type: url, label: Publish Component, default: "https://esm.sh/@moq/publish@0.5.6/element", description: "The script that defines the capture element, pinned like the player"}
+    - {name: text_waiting, type: text, max_length: 500, default: "The broadcast has not started yet.", description: "Shown when a broadcast is scheduled and has no waiting text of its own"}
+    - {name: text_ended, type: text, max_length: 500, default: "This broadcast has ended.", description: "Shown on an ended broadcast without a replay"}
+    - {name: text_cancelled, type: text, max_length: 500, default: "This broadcast was cancelled."}
+    - {name: text_full, type: text, max_length: 500, default: "This broadcast is full. Try again in a moment.", description: "Shown to a viewer who finds no seat"}
+    - {name: text_unavailable, type: text, max_length: 500, default: "This broadcast is not available.", description: "Shown for a broadcast that does not exist or that the person may not watch (the same words for both)"}
+    - {name: text_replay, type: data, max_length: 200, default: "Watch the replay", description: "The replay link's words"}
+  actions:
+    - name: set_signing_key
+      label: Set Signing Key
+      permission: write
+      confirm: "Tokens signed with the new key work only where the relay's key directory holds it. Add the new key file there first; keep the old one until its tokens expire. Continue?"
+      params:
+        - {name: key, type: text, label: Key, required: true, secret: true, description: "The key as a JWK: the output of moq auth generate (HS256, with a kid)"}
+
+- name: BroadcastPublisher
+  label: Presenter
+  kind: child
+  fields:
+    - {name: email, type: email, required: true, in_list: true, description: "A person in this workspace who may start this broadcast"}
+    - {name: name, type: data, max_length: 140, in_list: true}
+
+- name: Broadcast
+  label: Broadcast
+  kind: master
+  module: live
+  title_field: title
+  search_fields: [reference_id]
+  description: "One live video from a presenter to an audience through the relay. It may be about any record (a lesson, a product, a meeting). Its status is moved only by the app: Scheduled until a presenter starts, Live until a presenter or a manager ends it, or until no presenter has renewed for a while."
+  fields:
+    - {name: title, type: data, required: true, max_length: 200, in_list: true}
+    - {name: status, type: select, options: [Scheduled, Live, Ended, Cancelled], default: Scheduled, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: description, type: text, max_length: 5000}
+    - {name: planned_start, type: datetime, in_list: true, in_filter: true}
+    - {name: planned_end, type: datetime}
+    - {name: reference_entity, type: data, max_length: 64, in_filter: true, description: "The record this broadcast is about, for example Lesson or Product; empty = a broadcast of its own"}
+    - {name: reference_id, type: data, max_length: 36, in_filter: true}
+    - {name: audience, type: select, options: [Members, Portal, Link, Public], description: "Who may watch; empty = Live Settings' default. Each includes the ones before it. About a record, signed-in and portal people need to be able to read that record"}
+    - {name: capacity, type: int, min: 0, description: "Viewers at once; 0 or empty = Live Settings' default (0 there: no limit)"}
+    - {name: waiting_text, type: text, max_length: 500, description: "Shown to viewers before it starts; empty = Live Settings' wording"}
+    - {name: publisher_role, type: data, max_length: 100, description: "A role whose holders may start it, beside the people below and its owner"}
+    - {name: publishers, type: table, of: BroadcastPublisher}
+    - {name: recording, type: select, options: [Default, "On", "Off"], default: Default, description: "Default = Live Settings"}
+    - {name: frame_origins, type: text, max_length: 2000, description: "Sites that may show the watch page in a frame, one origin per line (https://host). None = it cannot be framed"}
+    - {name: owner_email, type: email, read_only: true, no_copy: true}
+    - {name: presenter_name, type: data, read_only: true, no_copy: true, description: "Who started it"}
+    - {name: presenter_email, type: email, read_only: true, no_copy: true}
+    - {name: started_at, type: datetime, read_only: true, no_copy: true}
+    - {name: last_publish_at, type: datetime, read_only: true, hidden: true, no_copy: true, description: "When the presenter's token was last issued"}
+    - {name: ended_at, type: datetime, read_only: true, no_copy: true, in_list: true}
+    - {name: viewers_peak, type: int, read_only: true, no_copy: true, default: 0, in_list: true, description: "Most viewers at once, from their token renewals"}
+    - {name: viewers_total, type: int, read_only: true, no_copy: true, default: 0, description: "Different viewers that took a seat"}
+    - {name: replay_url, type: url, description: "Where the recording plays: set from the replay address when it ends, or by hand"}
+    - {name: replay_cleared_at, type: datetime, read_only: true, no_copy: true, description: "When upkeep cleared the replay link after the retention days; delete the objects it pointed to"}
+  indexes: [[status, planned_start], [reference_entity, reference_id]]
+  actions:
+    - {name: end, label: End Broadcast, permission: write, condition: "doc.status == 'Live'", confirm: "Viewers lose the stream when their tokens run out. End it?"}
+    - {name: call_off, label: Cancel Broadcast, permission: write, condition: "doc.status == 'Scheduled'"}
+    - name: issue_viewer_link
+      label: Make a Viewing Link
+      permission: write
+      condition: "doc.status == 'Scheduled' || doc.status == 'Live'"
+      params:
+        - {name: label, type: data, label: For, description: "Who or what it is for, to find it again"}
+        - {name: days, type: int, label: Valid For (Days), description: "Default 7, at most 90"}
+    - name: issue_publisher_link
+      label: Make a Presenter Link
+      permission: write
+      condition: "doc.status == 'Scheduled' || doc.status == 'Live'"
+      params:
+        - {name: presenter_name, type: data, label: Presenter, required: true}
+        - {name: presenter_email, type: email, label: Presenter Address}
+        - {name: days, type: int, label: Valid For (Days), description: "Default 7, at most 90"}
+    - {name: revoke_links, label: Revoke All Links, permission: write, confirm: "Every viewing and presenter link of this broadcast stops working, and nobody can renew with them. Continue?"}
+  form:
+    - {label: Broadcast, fields: [title, status, description, planned_start, planned_end]}
+    - {label: About, fields: [reference_entity, reference_id]}
+    - {label: Viewers, fields: [audience, capacity, waiting_text, frame_origins]}
+    - {label: Presenters, fields: [publisher_role, publishers, recording]}
+    - {label: Result, fields: [presenter_name, presenter_email, started_at, ended_at, viewers_peak, viewers_total, replay_url, replay_cleared_at, owner_email]}
+  list: {columns: [title, status, planned_start, viewers_peak], sort: created_at desc}
+
+- name: BroadcastLink
+  label: Broadcast Link
+  kind: master
+  module: live
+  title_field: label
+  description: "A viewing or presenter link of a broadcast. Only the SHA-256 of its secret is kept: the address is shown once, when it is made. Revoking it stops it at once, and nobody can renew with it."
+  fields:
+    - {name: broadcast, type: link, to: Broadcast, required: true, on_delete: cascade, in_list: true, in_filter: true}
+    - {name: kind, type: select, options: [Viewer, Presenter], required: true, in_list: true, in_filter: true}
+    - {name: label, type: data, max_length: 140, in_list: true}
+    - {name: presenter_name, type: data, max_length: 140}
+    - {name: presenter_email, type: email}
+    - {name: token_hash, type: data, read_only: true, hidden: true, no_copy: true}
+    - {name: expires_at, type: datetime, read_only: true, in_list: true}
+    - {name: used_at, type: datetime, read_only: true, no_copy: true, description: "When a presenter link first started the broadcast"}
+    - {name: revoked_at, type: datetime, read_only: true, no_copy: true, in_list: true}
+    - {name: owner_email, type: email, read_only: true, no_copy: true}
+  indexes: [[token_hash]]
+  actions:
+    - {name: revoke, label: Revoke, permission: write, condition: "isEmpty(doc.revoked_at)", confirm: "The link stops working and nobody can renew with it. Revoke it?"}
+  list: {columns: [broadcast, kind, label, expires_at, revoked_at], sort: created_at desc}
