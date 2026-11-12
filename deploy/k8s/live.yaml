@@ -1,0 +1,114 @@
+# Live video on Kubernetes (docs/deploy.md): moq-relay and its auth server in one pod (the relay reaches its auth
+# server on loopback), a Service for UDP and TCP 443, a probe on /health. Apply it in Ferrum's namespace:
+#   kubectl -n ferrum apply -f deploy/k8s/live.yaml
+# Before: the Secrets live-relay-tls (tls.crt, tls.key: cert-manager makes it for you from a Certificate for the
+# relay's name) and live-relay-keys (one <kid>.jwk file per signing key: kubectl create secret generic
+# live-relay-keys --from-file=<kid>.jwk). Mounted Secrets update in place, and the auth server reads the key
+# directory on every request: a new key file takes effect without a restart, an old one stays until you remove it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: live-relay
+data:
+  relay.toml: |
+    [listen]
+    bind = "[::]:443"
+    [listen.tls]
+    cert = "/certs/tls.crt"
+    key = "/certs/tls.key"
+    [web.https]
+    listen = "[::]:443"
+    cert = "/certs/tls.crt"
+    key = "/certs/tls.key"
+    [web.http]
+    listen = "[::]:8080"
+    [auth]
+    url = "http://127.0.0.1:4440/"
+    [internal]
+    listen = "127.0.0.1:9101"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: live-relay
+  labels: {app.kubernetes.io/name: live-relay}
+spec:
+  # One relay serves many viewers; more replicas are more relays: join them with [cluster] connect (docs/deploy.md)
+  # before raising this, or a viewer and a presenter on different replicas will not see each other.
+  replicas: 1
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 1, maxSurge: 0}}
+  selector:
+    matchLabels: {app.kubernetes.io/name: live-relay}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: live-relay}
+    spec:
+      terminationGracePeriodSeconds: 30   # the relay drains sessions with a GOAWAY on SIGTERM (drain_timeout, 10 s)
+      # Port 443 for a process that is not root: a safe sysctl since Kubernetes 1.22 (added capabilities are not
+      # effective for a non-root user).
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}, sysctls: [{name: net.ipv4.ip_unprivileged_port_start, value: "0"}]}
+      containers:
+        - name: relay
+          image: moqdev/moq-relay:0.17.16
+          args: ["/config/relay.toml"]
+          ports:
+            - {name: quic, containerPort: 443, protocol: UDP}
+            - {name: https, containerPort: 443, protocol: TCP}
+            - {name: health, containerPort: 8080, protocol: TCP}
+          readinessProbe: {httpGet: {path: /health, port: health}, periodSeconds: 5, failureThreshold: 2}
+          livenessProbe: {httpGet: {path: /health, port: health}, periodSeconds: 10, failureThreshold: 3, initialDelaySeconds: 10}
+          resources: {requests: {cpu: 250m, memory: 256Mi}, limits: {memory: 2Gi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: certs, mountPath: /certs, readOnly: true}
+        - name: auth
+          image: moqdev/moq:0.14.16
+          args: ["auth", "serve", "--listen", "127.0.0.1:4440", "--key-dir", "/keys"]
+          resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 128Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: keys, mountPath: /keys, readOnly: true}
+      volumes:
+        - {name: config, configMap: {name: live-relay}}
+        - {name: certs, secret: {secretName: live-relay-tls}}
+        - {name: keys, secret: {secretName: live-relay-keys}}
+---
+# The address browsers dial: one name, UDP and TCP on 443. Mixed-protocol load balancers need Kubernetes 1.26 or
+# newer (or a provider that offers them); otherwise use two Services sharing the address. Preserve the client address
+# (externalTrafficPolicy: Local) so QUIC keeps one path per client.
+apiVersion: v1
+kind: Service
+metadata:
+  name: live-relay
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector: {app.kubernetes.io/name: live-relay}
+  ports:
+    - {name: quic, port: 443, targetPort: quic, protocol: UDP}
+    - {name: https, port: 443, targetPort: https, protocol: TCP}
+---
+# What Ferrum's doctor asks (/health), reachable from inside the cluster only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: live-relay-health
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: live-relay}
+  ports:
+    - {name: health, port: 8080, targetPort: health}
+---
+# Ferrum's pods reach the relay's health check and nothing else of it; the internet reaches 443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: live-relay
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: live-relay}}
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{port: 443, protocol: UDP}, {port: 443, protocol: TCP}]
+    - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: ferrum}}}]
+      ports: [{port: 8080, protocol: TCP}]

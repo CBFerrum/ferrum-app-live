@@ -1,0 +1,29 @@
+id: live
+name: Live
+version: 0.1.0
+publisher: cbferrum
+summary: "One-to-many live video at low delay through a Media over QUIC relay: broadcasts attached to any record, signed short-lived access, embeddable player, viewer counts"
+description: README.md
+categories: [communication, marketing]
+license: AGPL-3.0-only
+homepage: https://github.com/CBFerrum/ferrum-app-live
+support: https://github.com/CBFerrum/ferrum-app-live/issues
+runtime: native
+platform: ">=0.3.2, <0.4"
+packages: [live]
+uninstall: ask
+# No interface of its own yet: Ferrum's records screens (a launcher entry at /data/live/) carry the
+# broadcasts, their links and the settings; the watch page and the publish page are served by the app
+# itself at /api/site/{workspace}/live/ (README, "Routes").
+contributes:
+  shell.assistant:
+    - id: live
+      title: "Live"
+      instructions: >-
+        A Broadcast is one live video from a presenter to an audience through a relay: Scheduled, Live, Ended or
+        Cancelled, moved only by the app. It may be about another record (reference_entity and reference_id). Its
+        audience is Members, Portal, Link or Public, each including the ones before it. Viewers now and the peak come
+        from the viewers' own token refreshes, kept without names on the relay.
+      suggestions:
+        - "Which broadcasts are live now?"
+        - "How many people watched last week's webinar?"
