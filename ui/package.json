@@ -1,0 +1,16 @@
+{
+  "name": "ferrum-app-live-ui",
+  "private": true,
+  "type": "module",
+  "description": "Live's own interface at /live/, built with Ferrum-Frontend's packages from the sibling checkout (../../ferrum/web); the two moq components are its one dependency of its own, in ui/node_modules",
+  "scripts": {
+    "build": "node ../../ferrum/web/packages/build/cli.mjs build",
+    "check": "node ../../ferrum/web/packages/build/cli.mjs check",
+    "typecheck": "node ../../ferrum/web/packages/build/cli.mjs typecheck",
+    "test": "node ../../ferrum/web/packages/build/cli.mjs test"
+  },
+  "dependencies": {
+    "@moq/publish": "0.5.6",
+    "@moq/watch": "0.6.6"
+  }
+}
