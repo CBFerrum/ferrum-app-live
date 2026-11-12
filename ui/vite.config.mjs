@@ -6,6 +6,7 @@
 // ever loads a script from a third-party address; the alias keeps them resolving from ui/node_modules
 // while every other library resolves from Ferrum-Frontend.
 import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ferrumApp } from "../../ferrum/web/packages/build/vite.mjs";
 
@@ -21,6 +22,23 @@ config.plugins.push({
   name: "live:libav-opus",
   generateBundle() {
     for (const f of readdirSync(libav)) if (/-opus-af\.wasm\.(mjs|wasm)$/.test(f)) this.emitFile({ type: "asset", fileName: `assets/${f}`, source: readFileSync(libav + f) });
+  },
+});
+
+// The public pages load the two components from the app's own address, at paths that name their versions
+// (assets/moq-watch-0.6.6.js, assets/moq-publish-0.5.6.js), whatever the interface's own hashed names are. They are
+// extra entries of the build; what they import is hashed beside them. The build fails if either is missing.
+const root = fileURLToPath(new URL(".", import.meta.url));
+const version = (pkg) => JSON.parse(readFileSync(join(moq, pkg, "package.json"), "utf8")).version;
+const entries = { "moq-watch": `moq-watch-${version("watch")}`, "moq-publish": `moq-publish-${version("publish")}` };
+const rollup = (config.build.rollupOptions ??= {});
+rollup.input = { index: join(root, "index.html"), "moq-watch": join(root, "src/moq-watch.ts"), "moq-publish": join(root, "src/moq-publish.ts") };
+rollup.preserveEntrySignatures = "strict";
+rollup.output = { ...rollup.output, entryFileNames: (c) => (entries[c.name] ? `assets/${entries[c.name]}.js` : "assets/[name]-[hash].js") };
+config.plugins.push({
+  name: "live:moq-entries",
+  generateBundle(_o, bundle) {
+    for (const file of Object.values(entries)) if (!bundle[`assets/${file}.js`]) this.error(`the build did not emit assets/${file}.js: the public pages need it`);
   },
 });
 

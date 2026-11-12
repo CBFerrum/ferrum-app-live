@@ -70,7 +70,7 @@ export function problems(d: Draft): Partial<Record<keyof Draft, string>> {
   if (!whole(d.default_capacity, 0, 10_000_000)) out.default_capacity = t("A whole number of viewers, or 0 for no limit.");
   if (!whole(d.retention_days, 1, 3650)) out.retention_days = t("A whole number of days from 1 to 3650.");
   if (d.replay_base_url.trim() && !web(d.replay_base_url, false)) out.replay_base_url = t("An address starting with https://, or leave it empty.");
-  for (const k of ["player_module_url", "publisher_module_url"] as const) if (d[k].trim() && !web(d[k], true)) out[k] = t("An https address, or leave it empty for the pinned one.");
+  for (const k of ["player_module_url", "publisher_module_url"] as const) if (d[k].trim() && !web(d[k], true)) out[k] = t("An https address, or leave it empty for the bundled copy.");
   return out;
 }
 
@@ -250,8 +250,8 @@ function Form({ row, defaults, writable }: { row: Settings; defaults: Record<str
         </Field>
       </Section>
 
-      <Section title={t("Pages for people outside")} hint={t("The pages sent to people with no account (a presenter link, a viewing link, a public broadcast) load the player from these addresses. The screens inside Ferrum use the copy shipped with this app and load nothing from outside.")}>
-        <Field label={t("Player script")} htmlFor="lv-player" error={err("player_module_url")} hint={t("Pinned to the version this app was built against. Serve your own copy to keep third parties off these pages.")}>
+      <Section title={t("Pages for people outside")} hint={t("The pages sent to people with no account (a presenter link, a viewing link, a public broadcast) load the player from the copy bundled with this app, served from this app’s own address. Name an address below only to serve it from elsewhere you run.")}>
+        <Field label={t("Player script")} htmlFor="lv-player" error={err("player_module_url")} hint={t("Empty: the bundled copy, at the version this app was built against. An https address replaces it, and the page then allows script from that address only.")}>
           <input id="lv-player" className="input mono" type="url" value={d.player_module_url} disabled={!writable} onChange={(e) => set({ player_module_url: e.target.value })} />
         </Field>
         <Field label={t("Presenter script")} htmlFor="lv-capture" error={err("publisher_module_url")}>

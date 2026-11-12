@@ -20,13 +20,16 @@ pub fn module_ok(url: &str) -> bool {
     plain && origin(url).is_some_and(|o| o.starts_with("https://") || o.starts_with("http://localhost"))
 }
 
-pub fn render(present: bool, module: &str, relay: Option<&str>, frames: &[String]) -> SiteResponse {
+/// `module`: the address Live Settings names for the component, if any; else `bundled`, the app's own file (served at `module/{file}` beside the page).
+pub fn render(present: bool, module: &str, bundled: Option<&str>, relay: Option<&str>, frames: &[String]) -> SiteResponse {
     let nonce = {
         use base64::Engine as _;
         base64::engine::general_purpose::STANDARD.encode(rand::random::<[u8; 16]>())
     };
     let module = if module_ok(module) { module } else { "" };
-    let module_origin = origin(module).unwrap_or_default();
+    // The origin the script comes from: the page's own unless the workspace named another, never a wildcard.
+    let (module, module_origin) =
+        if module.is_empty() { (bundled.unwrap_or_default(), "'self'".to_string()) } else { (module, origin(module).unwrap_or_default()) };
     // The relay: WebTransport and fetches on its https origin, the WebSocket fallback on the same host.
     let relay_origin = relay.and_then(origin).unwrap_or_default();
     let websocket = relay_origin.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
@@ -85,7 +88,8 @@ main{min-height:100%;display:flex;flex-direction:column;align-items:center;justi
   const first = kind === 'present' ? 'publish' : 'watch';
   const again = kind === 'present' ? 'publish/refresh' : 'watch/refresh';
   let el = null, timer = null, defined = null;
-  const define = () => defined || (defined = import("__MODULE__"));
+  const mod = "__MODULE__";
+  const define = () => defined || (defined = import(/^https:|^http:/.test(mod) ? mod : base + '/module/' + mod));
   const show = async (o) => {
     await define();
     const e = o.element;

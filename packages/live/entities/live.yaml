@@ -17,8 +17,8 @@
     - {name: recording_default, type: check, default: false, description: "Whether broadcasts are recorded when they say nothing. Needs a recorder beside the relay: see docs/moq.md"}
     - {name: replay_base_url, type: url, label: Replay Address, description: "Where recorded HLS segments are served from; an ended broadcast's replay link is this address, the broadcast's path and master.m3u8"}
     - {name: retention_days, type: int, default: 30, min: 1, max: 3650, description: "Days an ended broadcast keeps its replay link, its links and its counts' seats; upkeep clears them after that"}
-    - {name: player_module_url, type: url, label: Watch Component, default: "https://esm.sh/@moq/watch@0.6.6/element", description: "The script that defines the player element, pinned to the version this app was built against. Self-host it to keep third parties off your pages"}
-    - {name: publisher_module_url, type: url, label: Publish Component, default: "https://esm.sh/@moq/publish@0.5.6/element", description: "The script that defines the capture element, pinned like the player"}
+    - {name: player_module_url, type: url, label: Watch Component, description: "The script that defines the player element for the public pages. Empty: the copy bundled with this app, served from its own address (recommended). Set an https address only to serve it from elsewhere you run"}
+    - {name: publisher_module_url, type: url, label: Publish Component, description: "The script that defines the capture element for the presenter page. Empty: the copy bundled with this app. Set an https address only to serve it from elsewhere you run"}
     - {name: text_waiting, type: text, max_length: 500, default: "The broadcast has not started yet.", description: "Shown when a broadcast is scheduled and has no waiting text of its own"}
     - {name: text_ended, type: text, max_length: 500, default: "This broadcast has ended.", description: "Shown on an ended broadcast without a replay"}
     - {name: text_cancelled, type: text, max_length: 500, default: "This broadcast was cancelled."}

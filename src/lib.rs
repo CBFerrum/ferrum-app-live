@@ -14,6 +14,7 @@ mod access;
 mod broadcast;
 mod health;
 mod links;
+mod module;
 mod page;
 pub mod relay;
 mod reports;
