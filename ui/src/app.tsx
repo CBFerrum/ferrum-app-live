@@ -54,6 +54,7 @@ const router = createBrowserRouter(
         { path: "new", lazy: () => import("./New").then((m) => ({ Component: m.NewBroadcast })) },
         { path: "b/:id", lazy: () => import("./Control").then((m) => ({ Component: m.ControlRoute })) },
         { path: "watch/:id", lazy: () => import("./Watch").then((m) => ({ Component: m.WatchRoute })) },
+        { path: "settings", lazy: () => import("./Settings").then((m) => ({ Component: m.Settings })) },
         { path: "e/:entity", lazy: page("ListView") },
         { path: "e/:entity/:id", lazy: page("FormView") },
         { path: "r/:name", lazy: page("ReportView") },
