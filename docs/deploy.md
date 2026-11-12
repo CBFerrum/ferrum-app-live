@@ -25,12 +25,12 @@ the JWT against the key files in its key directory and answers with a grant. Liv
 Before the first start, in `deploy/live/` (the example `relay.toml` is there): `cert.pem` and `key.pem` for the
 relay's public name, and `keys/<kid>.jwk`.
 
-1. **A key.** `docker run --rm -v "$PWD/live/keys:/out" moqdev/moq:0.14.16 auth generate --out /out/ferrum-1.jwk`
-   (check with `moq auth --help` that the version has `--id`, or edit the file's `kid` to `ferrum-1`: the file name
-   must be `{kid}.jwk`, and the JWK must carry that `kid`). It is a symmetric HS256 key: the auth server and Ferrum
-   share the secret.
+1. **A key.** `docker run --rm -v "$PWD/live/keys:/out" moqdev/moq:0.14.16 auth generate --id ferrum-1 --out-dir /out`
+   writes `ferrum-1.jwk` (`--out-dir` names the file `{kid}.jwk`, which is how the auth server finds it; the file holds the
+   JWK as base64url text, which both the auth server and Live read). It is a symmetric HS256 key: the auth server and
+   Ferrum share the secret. Paste the file's text into **Set Signing Key**.
 2. **Live Settings** (in the app): *Relay Address* `https://live.example.com`, *Relay Health Address*
-   `http://live-relay:8080/health` (as the server reaches it), then **Set Signing Key** with the same JWK. The
+   `http://live-relay:8080/health` (as the server reaches it), then **Set Signing Key** with the same key text. The
    app seals it and never shows it again; it shows only the key's name.
 3. **Certificate.** A publicly trusted one for the name (browsers do not accept a self-signed certificate for
    WebTransport unless pinned). The relay watches the files and reloads them.
