@@ -127,6 +127,7 @@ impl DocHook for SettingsHook {
         }
         for field in ["player_module_url", "publisher_module_url"] {
             if let Some(url) = s(doc, field)
+                && !url.trim().is_empty()
                 && !crate::page::module_ok(url)
             {
                 return Err(Error::field(field, "an https address, without quotes, spaces or angle brackets"));

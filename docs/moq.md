@@ -99,7 +99,7 @@ verifies a token itself: the reference auth server `moq auth serve` does**, and 
 * `<moq-watch url="https://relay/{path}?jwt=..." name="live.hang">` with a `<canvas>` inside; attributes `url`,
   `name`, `paused`, `muted`, `volume`, `delay` (`auto`, a duration, or `instant`), `buffer`, `captions`,
   `visible`, `announced`, `catalog-format`. `import "@moq/watch/element"` registers it
-  (`https://esm.sh/@moq/watch/element` for a no-build page).
+  (`https://esm.sh/@moq/watch/element` is what moq documents for a no-build page; Live does not use it).
 * `<moq-publish url=... name=... source="camera|screen|file">` with a `<video muted autoplay>` inside; also
   `muted`, `invisible`, `preview`, `announce`. `@moq/publish/element`.
 * The URL carries the token (`?jwt=`); changing the `url` attribute reconnects, which is how a renewed token is
@@ -117,6 +117,8 @@ element the properties the 0.6.6/0.5.6 typings list: `paused`, `muted`, `volume`
 reconnecting connection's `connection.status`; and `sources.video`/`sources.audio` → `device.preferred` to choose the camera and microphone. A changed `url` is how a
 renewed token is applied. `@kixelated/libavjs-webcodecs-polyfill` (pulled in by `@moq/hang`) holds a jsDelivr address in a branch moq does not take (it hands the polyfill its own bundled
 Opus variant); the build copies that variant's two WebAssembly files beside its chunk. None of this has met a browser with a relay.
+
+The public pages (`GET /watch/{id}`, `GET /present/{id}`) load the same bundled components from the app's own address: the build emits `assets/moq-watch-{version}.js` and `assets/moq-publish-{version}.js` beside the hashed files they import, and `src/module.rs` serves those files and what they reference (and the Opus WebAssembly) at `module/{file}`, immutable-cached, nothing else of `ui/dist`. The Live Settings addresses default to empty (that bundled copy); a set address is used instead, and the page's policy then names that origin in place of `'self'`. Subresource integrity is not used: the component's own imports (chunks, WebAssembly) cannot carry it.
 
 ## The gateways
 

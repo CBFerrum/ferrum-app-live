@@ -49,6 +49,15 @@ impl Site for LiveSite {
         let mut resp = match (req.method.as_str(), path.as_slice()) {
             ("GET", ["watch", id]) => self.page(k, &req, false, id).await?,
             ("GET", ["present", id]) => self.page(k, &req, true, id).await?,
+            ("GET", ["module", name]) => match crate::module::file(name) {
+                Some((ct, bytes)) => {
+                    let mut r = SiteResponse::text(200, ct, String::new());
+                    r.body = bytes.to_vec();
+                    r.headers.push(("cache-control".into(), "public, max-age=31536000, immutable".into()));
+                    r
+                }
+                None => return Err(Error::NotFound("endpoint".into())),
+            },
             ("GET", ["embed"]) => self.embed_for_record(k, &req).await?,
             ("GET", ["broadcasts", id, "embed"]) => {
                 let link = req.query.get("link").and_then(Value::as_str);
@@ -110,7 +119,8 @@ impl LiveSite {
             Err(_) => return Err(Error::NotFound("broadcast".into())),
         };
         let module = set.text(if present { "publisher_module_url" } else { "player_module_url" });
-        Ok(page::render(present, &module, set.relay_url().as_deref(), &frames))
+        let bundled = crate::module::entry(if present { "publish" } else { "watch" });
+        Ok(page::render(present, &module, bundled, set.relay_url().as_deref(), &frames))
     }
 
     /// Adds the page address and the frame other apps put beside their content.
