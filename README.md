@@ -1,204 +1,374 @@
 <div align="center">
 
-# Ferrum Live
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+  <img alt="Ferrum Live: live video to a large audience at low delay" src="docs/assets/banner-light.svg" width="100%">
+</picture>
 
-**A native app for [Ferrum](https://github.com/CBFerrum/Ferrum), the open-source, AI-first business platform.**
+<br>
 
-[Overview](#overview) · [How it works](#how-it-works) · [Putting the player beside other content](#putting-the-player-beside-other-content) · [The player component](#the-player-component) · [Routes](#routes) · [The interface](#the-interface) · [Install](#install) · [Develop](#develop) · [Changelog](#changelog)
+[![Version](https://img.shields.io/badge/version-0.1.1-be123c?style=flat-square)](CHANGELOG.md)
+[![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
+[![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
+![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-data-336791?style=flat-square&logo=postgresql&logoColor=white)
+![React](https://img.shields.io/badge/React-TypeScript-0ea5e9?style=flat-square&logo=react&logoColor=white)
+![Media over QUIC](https://img.shields.io/badge/Media%20over%20QUIC-moq--relay%200.17.16-be123c?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-5%20Rust%20%2B%20~90%20UI-16a34a?style=flat-square)
+
+### Put one presenter in front of a large audience at low delay, about any record, with seats, links and replays you control.
+
+Ferrum Live runs one-to-many live video through a [Media over QUIC](https://github.com/moq-dev/moq) relay that you run beside Ferrum. A broadcast stands alone or is about a lesson, a product, a campaign or a meeting with an audience, and the platform's own permissions on that record decide who may watch. It is for training, webinars, live shopping and town halls, instead of a third-party streaming service. Sound and pictures never pass through Ferrum: Live signs the access, counts the audience and serves the pages.
+
+[💡 Why](#-why-live) · [📸 Screenshots](#-screenshots) · [✨ Features](#-features) · [📊 Compare](#-how-it-compares) · [📍 Roadmap](#-roadmap) · [🚀 Install](#-install) · [🔧 Develop](#-develop)
 
 </div>
 
----
-
-## Overview
-
-Ferrum Live is one-to-many live video at low delay: one presenter (or a few), a large audience, through a
-[Media over QUIC](https://github.com/moq-dev/moq) relay that you run beside Ferrum. A broadcast stands alone or is
-about any record (a lesson, a product, a campaign, a meeting with an audience), and the platform's own permissions on that
-record decide who may watch it. Two-way meetings stay in Mail and Chat (Comms) on LiveKit; Live is for the other
-shape. Live signs the access, counts the audience and serves the pages; sound and pictures never pass through Ferrum.
-
-| At a glance | |
-|---|---|
-| Version | `0.1.1` |
-| Platform | Ferrum `>=0.3.2, <0.4` |
-| Requires | nothing else; a relay (docs/deploy.md) |
-| Interface | its own at `/live/` (broadcasts, a presenter's control page, the watch page, planning, settings), Ferrum's records screens for links and reports, and the app's two pages for people with no account |
-| Records | 4 entities in 1 package: Broadcast, Presenter (child), Broadcast Link, Live Settings |
-| Roles | 2: Live User, Live Manager |
-| Reports | 2: Broadcasts and Their Audience, Audience by Status |
-| Built against | `moq-relay` 0.17.16 (docs/moq.md: what was read, what was not run) |
-
 > [!IMPORTANT]
-> Nothing here has met a running relay. docs/moq.md lists the pages read; "What was not run against a real relay" below lists the paths no test could reach.
+> **Nothing here has met a running relay.** The relay was read from its own documentation and source (pinned at `moq-relay` 0.17.16), and the suite runs against a fake behind one interface. [docs/moq.md](docs/moq.md) lists the pages read, and [What was not run](#what-was-not-run-against-a-real-relay) lists the paths no test could reach.
 
-## How it works
+## 💡 Why Live
 
-* **A broadcast** has a status that only the app moves: Scheduled until a presenter starts, Live until a presenter or a
-  manager ends it (or until nobody has renewed the presenter's token for its life and a minute: upkeep ends it), then Ended;
-  Cancelled from Scheduled.
-* **Who may present:** its owner, the people it names, the holders of the role it names, or an outsider with a *presenter
-  link* (one start, then renewals while Live). A portal person never presents.
-* **Who may watch**, an audience ladder where each includes the ones before it: *Members* (signed-in people: for a
-  broadcast about a record, those who can read that record; of its own, those who can read the broadcast), *Portal* (and portal
-  people, by the record's portal permission when there is one), *Link* (and anyone holding a viewing link), *Public*
-  (anyone). The answer for a broadcast that does not exist and one you may not watch is the same.
-* **Tokens, one interface.** `src/relay.rs` is the only place that knows the relay. `Relay::token` mints a token for
-  exactly this broadcast's path (`{prefix}/{workspace}/{broadcast}`) with one right and an expiry (viewers 10 minutes,
-  presenters 60 by default; Live Settings) and nothing else, since moq refuses a claim it does not know. A
-  player renews at two thirds of the life through the renewal route, which re-decides every right from scratch.
-* **Capacity and counts.** A seat is a keyed hash (of the person, or of the link and a browser's random id, or of the
-  browser's random id), never a name, kept in PostgreSQL; taking one locks the broadcast's row, counts, and adds, so two
-  viewers cannot both take the last. Renewing a live seat takes no lock. Viewers now and the peak come from this; the relay is told nothing.
-* **Links.** A secret is 256 random bits in an address's fragment (`#k=…`, which a browser never sends); only its
-  SHA-256 is kept. Revoke at once, or by ending the broadcast, or by expiry (7 days by default, 90 at most).
-* **Keys.** The relay's signing key is a Live Setting (*Set Signing Key*, sealed, never shown): an HS256 JWK from
-  `moq auth generate`. Rotating without dropping anyone: docs/deploy.md.
-* **Recording.** moq documents no recorder, so Live does not record; it links a replay (the *Replay Address* and the
-  broadcast's path) and clears it after *Retention days*, saying when (docs/moq.md).
-* **Wording.** The pages say only what the server answers: the broadcast's own waiting text, and Live Settings' words for
-  ended, cancelled, full, not available and the replay link (defaults in the package). None is in the code.
-* **Personal data.** A presenter's name and address (on a broadcast, on a presenter link, in its presenter table) are
-  declared personal data: found by address, blanked on erasure. Seats hold none.
+- 🎥 **Low delay, one to many.** Built on Media over QUIC (open source, MIT or Apache-2.0): a presenter and a large audience through a relay.
+- 🔗 **About any record.** A broadcast can be about a lesson, a product or a calendar event, and who may watch follows who can read that record.
+- 🪜 **A simple audience ladder.** Members, Portal, Link or Public, each including the ones before it.
+- 🎟️ **Seats that count without names.** Capacity is enforced atomically, and viewers now and the peak come from keyed hashes, never names.
+- 🔑 **Short-lived access.** A token is for one broadcast path, with one right and an expiry, and is re-decided on every renewal.
+- 🧩 **Embeddable.** A player component and an embed description let other apps show a broadcast beside their own content, in a frame only the origins you name can use.
+- 🔓 **Open source, self-hosted.** AGPL, with your own relay and no per-viewer fee.
 
-## Putting the player beside other content
+## 🎯 At a glance
 
-Live builds no code in other apps; this is the contract they use.
-
-1. **Make a broadcast about the record**: `reference_entity` and `reference_id` (the record's type and id), an audience, a
-   capacity if wanted. A broadcast is an ordinary record: any app may create one through the records API.
-2. **Ask for the embed**, signed in: `GET /api/app/live/embed?entity=Lesson&record={id}` →
-   `{broadcasts: [{id, title, status, planned_start, text, page, iframe}]}`, newest first, only those the caller may watch (a person who may not
-   is not told they exist). `iframe` is a complete `<iframe src=… allow="autoplay; fullscreen">`; `page` is the address.
-   For one broadcast, `GET …/broadcasts/{id}/embed` (add `?link=` for a viewing link's secret).
-3. **Allow the frame**: the broadcast's *frame origins* (one `https://host` per line, at most ten, checked as the
-   platform checks them) are the only sites that may frame the page; empty means none. The page answers with its own
-   `Content-Security-Policy: frame-ancestors …`.
-4. **The three cases**
-   * **LMS, a live class**: a lesson (or session) gets a broadcast about it with audience *Members* or *Portal*; the lesson page
-     calls the embed route and draws `iframe` above its text and chat, and shows `text` (the waiting, ended or replay words)
-     when `status` is not Live. People who may read the lesson may watch it; enrolled students on the portal need the portal role's read on the
-     lesson. The teacher is named in *Presenters*.
-   * **Commerce, live shopping**: a product or a collection gets a broadcast of audience *Public*, with the shop's origin in *frame origins*;
-     the product page places `iframe` beside the cart. The page and the cart do not talk to each other (they are
-     different origins); the cart stays the shop's.
-   * **Comms, a meeting with an audience**: a calendar event gets a broadcast about it; the meeting page embeds the same
-     `iframe`. Two-way talk stays in the event's LiveKit meeting; the audience watches here. A guest list is
-     *Link*: one viewing link per guest (*Make a Viewing Link*), or the event's own permission as *Members*.
-5. **A link for people with none**: the action *Make a Viewing Link* (`label`, `days`) gives a one-time address to send
-   (`#k=` in its fragment). Append it to `page` or pass it as `link`.
-
-## Routes
-
-At `/api/app/live/…` (signed in) and `/api/site/{workspace}/live/…` (public: a request carries only what its body says).
-Bodies are JSON; every answer is `no-store`.
-
-| Route | What it does |
+| | |
 |---|---|
-| `POST /broadcasts/{id}/publish` `{link?}` | Start presenting (a presenter, or a presenter link once) → `{relay, path, name, token, url, element, expires_at, refresh_in, recording, status}`. Scheduled becomes Live |
-| `POST /broadcasts/{id}/publish/refresh` | Renew the presenter's token; only while Live |
-| `POST /broadcasts/{id}/end` `{link?}` | End it: a presenter, a presenter link, or someone who may change broadcasts and see this one |
-| `POST /broadcasts/{id}/watch` `{link?, seat?}` | A viewer's seat and token (same shape); or `{status, title, text, replay_url, replay_text}` while it is Scheduled, Ended or Cancelled; or `503 {error: "full", message}`. `seat` is a random id of 16 to 64 letters and digits made by the page (not for signed-in people) |
-| `POST /broadcasts/{id}/watch/refresh` | Renew; refused (404) once the right is gone or the seat is not live, `409` once it has ended |
-| `POST /broadcasts/{id}/watch/leave` | Give the seat up |
-| `GET /embed?entity=&record=` and `GET /broadcasts/{id}/embed` | The embed description above |
-| `GET /watch/{id}`, `GET /present/{id}` | The pages: one script, the pinned `<moq-watch>` or `<moq-publish>` element (Live Settings), CSP with the relay and that script's origin only |
+| 📦 Version | `0.1.1` |
+| 🧱 Kind | Own interface at `/live/`, plus the app's own pages for people with no account |
+| 🗃️ What it adds | 4 entities in the `live` package: Broadcast, Presenter (child), Broadcast Link, Live Settings |
+| 👥 Roles | 2: Live User, Live Manager |
+| 📊 Reports | 2: Broadcasts and Their Audience, Audience by Status |
+| 📣 Events | 2: Broadcast started, Broadcast ended |
+| ⏱️ Upkeep | every minute: ends broadcasts nobody presents, forgets old seats, clears replay links past retention |
+| 🔗 Depends on | Ferrum `>=0.3.2, <0.4`; a relay you run (docs/deploy.md) |
+| 🤝 Works with | LMS, Commerce, Comms (calendar events), and any app with records, through the embed |
+| 🧱 Built against | `moq-relay` 0.17.16, `@moq/watch` 0.6.6 and `@moq/publish` 0.5.6 |
+| 🌍 Languages | English only so far; every word goes through the translation function, and a workspace can translate them |
+| 🧪 Tests | 5 Rust tests (one scenario against PostgreSQL), about 90 interface tests against faked routes and elements |
+| 📄 Licence | AGPL-3.0-only |
 
-## The player component
+## 📸 Screenshots
 
-For the interfaces of other apps (a lesson, a product with its cart beside it, a meeting's audience view). Live builds no code in
-those apps; the component is Live's, in `ui/src/embed/` (`import { LivePlayer, pick } from "./embed"`), and what it speaks is only the
-embed routes above. An app that cannot import it implements the contract in a few lines, from the same routes.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screens/live-home-dark.webp">
+  <img alt="Live broadcasts" src="docs/assets/screens/live-home-light.webp" width="100%">
+</picture>
 
-```tsx
-<LivePlayer entity="Lesson" record={lesson.id} onStatus={(status) => setLive(status === "Live")} />
-<LivePlayer broadcast={id} link={secret} mode="inline" aspect="4 / 3" poll={10} />
+<p align="center"><b>📡 Broadcasts</b><br><sub>See what is live, what is coming up and how many watched, and start a new broadcast.</sub></p>
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screens/live-new-dark.webp"><img alt="New broadcast" src="docs/assets/screens/live-new-light.webp"></picture>
+<p><b>🗓️ New broadcast</b><br><sub>Plan a broadcast: when, who may watch, how many at once and who may present.</sub></p>
+</td>
+<td width="50%" valign="top">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screens/live-control-dark.webp"><img alt="Presenter control" src="docs/assets/screens/live-control-light.webp"></picture>
+<p><b>🎛️ Presenter control</b><br><sub>The presenter's page: check camera and microphone, go live, see viewers now and make links to share.</sub></p>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screens/live-watch-dark.webp"><img alt="Watch page" src="docs/assets/screens/live-watch-light.webp"></picture>
+<p><b>👀 Watch page</b><br><sub>What viewers see before it starts: the waiting text, then the stream at low delay.</sub></p>
+</td>
+<td width="50%" valign="top">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screens/live-settings-dark.webp"><img alt="Live settings" src="docs/assets/screens/live-settings-light.webp"></picture>
+<p><b>⚙️ Settings</b><br><sub>Set the relay, token lifetimes, default audience and capacity, replay address and the words viewers see.</sub></p>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screens/live-broadcast-list-dark.webp"><img alt="Broadcasts list" src="docs/assets/screens/live-broadcast-list-light.webp"></picture>
+<p><b>📋 All broadcasts</b><br><sub>Every broadcast with its status, planned start and audience peak, filterable and exportable.</sub></p>
+</td>
+<td width="50%" valign="top"></td>
+</tr>
+</table>
+
+## ✨ Features
+
+### 📡 Broadcasts
+
+- **Broadcast.** A title, description, planned start and end, optionally the record it is about (`reference_entity` and `reference_id`), an audience, a capacity, a waiting text, the people and role who may present, whether it is recorded, and the sites that may frame its page.
+- **Status that only the app moves.** Scheduled until a presenter starts; Live until a presenter or a manager ends it (or until nobody has renewed the presenter's token for its life and a minute, and upkeep ends it); then Ended. Cancelled is possible from Scheduled.
+- **Actions.** End Broadcast (with a confirmation), Cancel Broadcast, Make a Viewing Link, Make a Presenter Link and Revoke All Links.
+- **Results kept.** Who started it, when it started and ended, viewers peak and total, the replay address, and when the replay was cleared.
+- **Events.** `live.broadcast_started` and `live.broadcast_ended` go out through the outbox for automations and processes, with the broadcast, its title, status and the record it is about.
+- **Plan one from another app.** `/live/new?entity=Lesson&record={id}` opens the form with the record chosen.
+- **Hand-over.** A person's open broadcasts (Scheduled or Live) are handed over with the rest of their work.
+
+### 🎥 Presenting
+
+- **Who may present.** The owner, the people the broadcast names, the holders of the role it names, or an outsider with a presenter link (one start, then renewals while Live). A portal person never presents.
+- **Control page** (`/live/b/{id}`). Checks what the browser can do, with plain messages for one that cannot present. Choose camera and microphone with a preview that stays on the device. **Go live** takes the relay address, the path and a token; the picture sent, viewers now, the watch address, a viewing link and a one-time presenter link are shown.
+- **Renewal.** The presenter's access renews at two thirds of its life, retried, with a visible state when it is refused (the broadcast was ended or the right was lost).
+- **End.** After a confirmation.
+- **Presenter links.** For someone with no account: a secret in the address's fragment (`#k=…`, which a browser never sends), kept only as a SHA-256 hash, shown once, valid 7 days by default and 90 at most, revocable at once.
+
+### 👀 Watching
+
+- **Audience ladder.** Each level includes the ones before it:
+
+| Audience | Who may watch |
+|---|---|
+| **Members** | Signed-in people. For a broadcast about a record, those who can read that record; for one of its own, those who can read the broadcast |
+| **Portal** | And portal people, by the record's portal permission when there is one |
+| **Link** | And anyone holding a viewing link |
+| **Public** | Anyone |
+
+- **Same answer for "not there" and "not yours".** A broadcast that does not exist and one you may not watch look the same.
+- **Watch page** (`/live/watch/{id}` in the shell, and the app's own public page). The waiting, live, ended and replay words; a full broadcast in the server's words with *Try again*; renewal; a new address when the connection drops; the seat given up on leaving (also by a request that outlives the page); pause, mute, volume, captions and full screen, with keys.
+- **Public pages load no third-party script.** The two moq components are bundled and served by the app itself, and a workspace may name its own https address instead.
+- **Viewing links.** One per guest, with a label, shown once, valid 7 days by default and 90 at most.
+
+### 🎟️ Seats and counts
+
+- **A seat** is a keyed hash of the person, or of the link and a browser's random id, or of the browser's random id. It holds no name or address, and is kept in PostgreSQL.
+- **Capacity is atomic.** Taking a seat locks the broadcast's row, counts and adds, so two viewers cannot both take the last one. Renewing a live seat takes no lock.
+- **Counts.** Viewers now, the peak and the total of different viewers come from the viewers' own token renewals. The relay is told nothing.
+- **Upkeep** forgets seats a day old.
+
+### 🔑 Access and keys
+
+- **One interface to the relay.** `src/relay.rs` is the only place that knows the relay. A token is for exactly this broadcast's path, with one right and an expiry (10 minutes for viewers and 60 for presenters by default), and nothing else, since moq refuses a claim it does not know.
+- **Re-decided each time.** Renewal re-decides every right from scratch, so a person who loses the right is stopped at their next renewal, and a revoked link or an ended broadcast cannot renew.
+- **Signing key.** An HS256 key (a JWK from `moq auth generate`) set with **Set Signing Key**, sealed and never shown. Rotate without dropping anyone by adding a new key file beside the old one, then setting the new key.
+- **Personal data.** A presenter's name and address, on a broadcast or a link, are found by address and blanked on erasure. Seats hold none.
+
+### 🧩 Embedding in other apps
+
+- **Embed description.** `GET /api/app/live/embed?entity=Lesson&record={id}` answers with the broadcasts about the record that the caller may watch (title, status, planned start, text, page and a ready `iframe`). One broadcast: `GET …/broadcasts/{id}/embed`, with `?link=` for a viewing link's secret. A person who may not watch a broadcast is not told it exists.
+- **Frame origins.** The only sites that may frame the watch page are the origins the broadcast names (one `https://host` per line, at most ten). The page answers with its own `Content-Security-Policy: frame-ancestors …`. Empty means none.
+- **`LivePlayer` component** (`ui/src/embed/`). Props for the record or one broadcast, a viewing link, `mode` (`frame` or `inline`), the picture's aspect ratio, a poll interval, and events `onStatus`, `onBroadcasts` and `onError`. It draws nothing when the person may watch nothing, shows the waiting, ended, cancelled and replay words, and never links or frames an address that is not `http(s)`. It is not yet published as a package: copy `ui/src/embed/`.
+- **Three cases.** A **live class** in the LMS (a lesson gets a broadcast with audience Members or Portal); **live shopping** in Commerce (a product gets a public broadcast, with the shop's origin in its frame origins); a **meeting with an audience** in Comms (a calendar event gets a broadcast; two-way talk stays in its LiveKit meeting).
+
+### ⚙️ Settings
+
+Live Settings holds the relay address and health address, the path prefix and stream name, token lifetimes (viewer 1-60 minutes, presenter 5-720), default audience and capacity, whether recording is the default, the replay address and retention days (1-3650, 30 by default), the scripts the public pages load, and every word viewers see: waiting, ended, cancelled, full, not available and the replay link. Browsers inside Ferrum may connect only where the app setting *Relay address for browsers* names, which an administrator sets to the same address.
+
+### 📊 Reports and health
+
+- **Broadcasts and Their Audience** (parameters: from and to date) with status, start and end, viewers now, peak and total.
+- **Audience by Status.**
+- **Doctor check.** The support report and `ferrum task doctor` say, in words, when Live Settings names no relay, holds no usable signing key, or the relay's `/health` does not answer.
+- **Home counts.** Live now, upcoming and ended, with viewers now and the peak.
+
+### 🔐 Roles and fit
+
+| Role | Can do |
+|---|---|
+| **Live User** | Plans broadcasts, presents the ones they are named on, and watches those they may see; reads Live Settings. Works on their own broadcasts and links. |
+| **Live Manager** | Every broadcast and link, and Live Settings: the relay's address, signing key, token lifetimes and wording. |
+
+- **Assistant.** Ferrum's assistant knows the states and audience ladder and suggests "Which broadcasts are live now?" and "How many people watched last week's webinar?".
+- **Not recording.** moq documents no recorder, so Live does not record. It links a replay (the *Replay Address* plus the broadcast's path) and clears it after the retention days, saying when.
+
+## 🧭 How it works
+
+```mermaid
+flowchart LR
+    PR["Presenter's browser"] -- "publish: signed token" --> RL["moq-relay"]
+    LV["Live app in Ferrum"] -- "signs short-lived tokens" --> PR
+    LV -- "signs short-lived tokens" --> VW["Viewers' browsers"]
+    VW -- "watch: signed token" --> RL
+    RL -- "asks who may do what" --> AU["moq auth server"]
+    LV -- "seats and counts" --> DB[("PostgreSQL")]
 ```
 
-| Prop | Meaning |
-|---|---|
-| `entity`, `record` | The record the broadcast is about. Of the broadcasts the person may watch, shows the one on now, else the soonest to come, else the latest that ended |
-| `broadcast` | One broadcast's id, instead of a record |
-| `link` | A viewing link's secret, for a person with no account who holds one (passed to the embed route only) |
-| `mode` | `frame` (default): Live's public watch page in an `<iframe>` built from `page`, never from the server's HTML string. The relay and its component then load under that page's own policy and the host's Content-Security-Policy needs nothing; the broadcast must name the host's origin in its frame origins, and its audience must reach people without a session, since that page carries none. `inline`: the player is drawn in the host's page with the person's session (so *Members* works); the host's manifest then needs the relay in `ui.csp.connect`, and it carries the moq components in its own build |
-| `aspect` | CSS `aspect-ratio` of the picture, `16 / 9` by default. The width is always the container's; the height follows |
-| `poll` | Seconds between asking again until the broadcast has ended; `20`, or `0` to ask once |
-| `title`, `className` | The frame's name for assistive technology (the broadcast's title by default); a class on the box |
+Live decides who may present or watch, and signs a token for exactly one broadcast's path. The relay carries sound and pictures; Ferrum never sees them. A relay with `--auth-url` asks the auth server, which verifies the token against the key files Live and it share.
 
-| Event | When |
-|---|---|
-| `onStatus(status, broadcast)` | What is shown changes: `Scheduled`, `Live`, `Ended`, `Cancelled`, or `none` when the person may watch no broadcast about the record (Live does not say whether one exists) |
-| `onBroadcasts(list)` | Each time the list is read, every broadcast about the record the person may watch, newest first |
-| `onError(error)` | Live refused or did not answer |
+```mermaid
+flowchart TD
+    S["Scheduled"] -- "presenter goes live" --> L["Live"]
+    L -- "presenter or manager ends it" --> E["Ended"]
+    L -- "nobody renews for a token's life and a minute" --> E
+    S -- "cancel" --> C["Cancelled"]
+    E --> R["Replay link, cleared after the retention days"]
+```
 
-It draws nothing for `none`; while there is nothing to watch it shows the broadcast's own words (waiting, ended, cancelled, and the replay
-link once it ended); a replay or frame address that is not `http(s)` is never linked or framed. It sends nothing about the person to the relay. Exported, but not
-yet published as a package: another app's repository takes it by copying `ui/src/embed/` (it needs `@ferrum/client`, `@ferrum/kit` and, for
-`inline`, the rest of `ui/src`), or builds against this checkout.
+A broadcast's status moves only through the app. Ended keeps its counts and an optional replay link.
 
-## The interface
+## 🧱 Data model
 
-Live has an interface of its own at `/live/` for people who are signed in (`ui/`, built with Ferrum-Frontend's packages, `ui/dist` committed):
-
-| Screen | Route | What it does |
+| Entity | What it is | Key fields or states |
 |---|---|---|
-| Broadcasts | `/live/` | Live now, upcoming and ended, with status, the record each is about, audience, viewers now and the peak; cancel a scheduled one |
-| New broadcast | `/live/new` | Plan one (also `?entity=Lesson&record={id}`, so another app can send a person here with the record chosen) |
-| Control page | `/live/b/{id}` | A presenter's page: camera and microphone check with a local preview, *Go live*, the picture sent, viewers now, access renewed on a timer and a visible state when a renewal is refused, *End*, the watch address, a viewing link and a one-time presenter link |
-| Watch page | `/live/watch/{id}` | The player inside the shell: waiting, live, ended and replay words, a full broadcast in the server's words with *Try again*, renewal, reconnection, captions and keys |
-| Live Settings | `/live/settings` | Relay address, the signing key (written, never read back), token lifetimes, default audience and capacity, replay and retention, where the outside pages load the components from (empty: the bundled copy) |
+| Broadcast | One live video from a presenter to an audience | Scheduled / Live / Ended / Cancelled, audience, capacity, reference entity and id, presenters, frame origins, viewers peak and total |
+| Presenter (child) | A person who may start a broadcast | email, name |
+| Broadcast Link | A viewing or presenter link | Viewer / Presenter, expiry, used at, revoked at; only a hash of the secret is kept |
+| Live Settings | The relay, tokens, defaults, replay and wording | relay address, signing key (sealed), lifetimes, retention |
 
-Ferrum's records screens still carry Broadcast Link, Live Settings' wording and the two reports. The pages for people with no account (a viewing link, a presenter link, a public broadcast) stay the app's own (`GET /watch/{id}`, `GET /present/{id}`).
+Behind them, two tables hold seats (keyed hashes, no names) and the secret those hashes use, both with row-level security.
 
-* **The moq components are bundled**: `@moq/watch` 0.6.6 and `@moq/publish` 0.5.6 (the versions docs/moq.md pins) are `ui/package.json`'s one dependency of its own and arrive as lazy chunks of the release, loaded when a watch or control page is first drawn; the list page loads none, and the entry script is about 1 KB. Nothing is fetched from another address at run time. The public pages load the same two components from the app's own address: the build also emits them as `assets/moq-watch-0.6.6.js` and `assets/moq-publish-0.5.6.js` (with what they import, hashed beside them, and the Opus WebAssembly), and the app serves exactly those files at `/api/site/{workspace}/live/module/{file}` with `public, max-age=31536000, immutable` and the right content types; any other name is not found. *Watch Component* and *Publish Component* in Live Settings are empty by default, which means those files; a workspace may name its own https address, and the page's policy then lists that origin instead of `'self'`, never a wildcard. No subresource integrity: it covers a script tag's own file, not the chunks and WebAssembly the component imports, so it would protect only the first of them.
-* **The relay address, twice.** Browsers inside Ferrum may connect only where the app's manifest allows: `ui.csp.connect` names the app setting *Relay address for browsers* (`setting:relay_url`), which an administrator sets, under the app's settings, to the same address as Live Settings' *Relay Address*. The platform offers no way to read that from a Live Setting.
-* **Viewers now** come from the report *Broadcasts and Their Audience*, whose rows name no id, so a row is matched by title and start; two broadcasts alike in both show a dash rather than a guess.
-* **Health.** The doctor's check of the relay is in the support report (a support key) and `ferrum task doctor`; no route answers a signed-in person, so the settings page shows what the settings themselves say (address and key set) and states that.
-* **Not built:** a calendar of broadcasts, a replay list, choosing who may present (the records form does), the wording of the pages (the records form does).
-* **Words.** Every word is passed through `t()`; no language file is shipped, so all of them are English until a workspace translates them (`ui/dist/words.json`).
+## 🔌 Integrations
 
-## What was not run against a real relay
+| With | How | Needs |
+|---|---|---|
+| moq-relay and its auth server | Tokens for one path, health check, relay on UDP and TCP 443 | A relay you run (`moqdev/moq-relay:0.17.16`, `moqdev/moq:0.14.16`), a certificate for its name, and a key |
+| LMS | A live class: a lesson's page calls the embed route | LMS installed |
+| Commerce | Live shopping beside the cart, in a frame | Commerce installed |
+| Comms | A meeting with an audience, from a calendar event | Comms installed |
+| Any app with records | A broadcast is an ordinary record; any app may create one through the records API | Nothing extra |
+| Ferrum automations | `live.broadcast_started` and `live.broadcast_ended` | Nothing extra |
+| Kubernetes and Docker Compose | `deploy/k8s/live.yaml` and `deploy/live.yml` with `deploy/live/relay.toml` | A host with UDP buffers raised |
+| RTMP, SRT, WebRTC and HLS gateways | moq's own CLI bridges one broadcast each | Not wired into Live yet |
 
-Every path to moq. The suite runs the fake behind `Relay`. Untested against the real thing: that `moq auth serve` accepts
-the tokens this app signs (only the signature scheme is checked, against a token moq's own JavaScript library signed);
-that a relay with `--auth-url` admits a session dialed at `{relay}/{path}?jwt=…`; the player and capture elements on
-these pages (including that the pinned script loads under the page's CSP and that a changed `url` attribute reconnects);
-the WebSocket fallback; key rotation with two key files; the compose overlay and the manifest; the relay's `/health`
-as the doctor asks it; that the platform lets a page set its own `Content-Security-Policy` on `/api/site/…`; and
-that the page, opened under `/api/app/live/…`, is identified as the signed-in person by whatever the platform sends it
-(the routes are tested with a person given; the page's own fetch was never run in a browser). And portal people
-were simulated (an outside context), not signed in through a portal.
+## 📊 How it compares
 
-Not run for the interface (no relay, no browser with a camera, no server): that the two moq elements, bundled, register and play under
-the shell's policy (`script-src 'self'`, `worker-src 'self' blob:`, `connect-src` from the app setting); that `<moq-publish>` takes the camera and
-microphone chosen on the control page (it reads `device.preferred` of the camera and microphone it makes, which the page sets when they
-appear); that the element's connection status reports a dropped connection as the page expects; the Opus fallback, whose two WebAssembly files
-the build copies beside its chunk (a browser without WebCodecs audio); the captions picker (it lists what the broadcast's catalog
-offers); full screen and the keys in a real browser; and that the shell serves `/live/` from `ui/dist` (the platform's list of app interfaces, `server/src/packages.rs`, does not name Live yet).
-The tests fake the components (custom elements with moq's attributes and signals), the relay and every route, at `fetch`.
+The leaders are streaming and webinar products: YouTube Live, Vimeo Livestream, Zoom Webinars and Events and Restream, with Owncast as the open-source, self-hosted one. Live is new, small and unproven against a relay; its case is control and one data set.
 
-## Install
+| Capability | Ferrum Live | YouTube Live | Vimeo Livestream | Zoom Webinars / Events | Restream | Owncast |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Live to a large audience at low delay | 🟡 | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Proven with real audiences | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Browser-based presenter studio | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Encoder ingest (RTMP, SRT) | ❌ | ✅ | ✅ | 🟡 | ✅ | ✅ |
+| Multistream to other platforms | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| Members-only and private audiences | ✅ | 🟡 | ✅ | ✅ | ➖ | ❌ |
+| Audience follows a business record's permissions | ✅ | ❌ | ❌ | ❌ | ➖ | ❌ |
+| One viewing link per guest | ✅ | 🟡 | ✅ | ✅ | ➖ | ❌ |
+| Presenter links for outsiders | ✅ | ❌ | 🟡 | ✅ | ✅ | ❌ |
+| Embed in your own site or app | ✅ | 🟡 | ✅ | 🟡 | 🟡 | ✅ |
+| Embed only on named origins | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Registration, reminders and follow-up | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Chat, Q&A and polls | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Hosted recording and replay | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| Closed captions | 🟡 | ✅ | ✅ | ✅ | 🟡 | ❌ |
+| Audience counts (now, peak, total) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Detailed analytics | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Tickets, memberships or paywall | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Seats counted without names | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+| Mobile apps | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Same data as lessons, shop and calendar | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Open source | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Self-hosted | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
-Install the app from a Ferrum store or by listing it in the server's build (docs/deploy.md, "What the platform would add").
-Run the relay (docs/deploy.md), then in Live Settings give its address and *Set Signing Key*, and set the same address under the app's
-settings (*Relay address for browsers*).
+Notes: 🟡 for Ferrum on low delay and the presenter studio means they are built and tested against fakes, not yet against a real relay or a browser with a camera; the studio is camera and microphone with a device check, with no layouts or other sources. 🟡 for captions means the player shows what the broadcast's catalogue offers; Live makes none. 🟡 for leaders usually means a paid tier or a limited form. Owncast's delay is that of HLS.
 
-## Develop
+### 🏆 Where Live stands out
 
-    export FERRUM_LIVE_TEST_DATABASE_URL=postgres://ferrum:ferrum@localhost:5432/ferrum_live_test
-    cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test
+- 🔗 **A broadcast about a record,** watched by whoever the platform lets read that record.
+- 🔑 **Access you decide and renew,** short-lived and re-checked, with links that are hashed and revocable.
+- 🎟️ **Seats counted without names,** and personal data limited to presenters.
+- 🔒 **No third-party scripts** on the public pages, and frames only on origins you name.
+- 🔓 **Open source and self-hosted,** on the same platform as lessons, shop and calendar.
 
-The app builds against the platform's main branch (`.cargo/config.toml` points a checkout at it, git-ignored).
+### 🚧 Where the leaders are still ahead
 
-The interface (`ui/`) builds with Ferrum-Frontend's packages from the sibling checkout (`../../ferrum/web`), as the other apps' do, and has moq's two
-components in `ui/node_modules`:
+- 🏭 **Proof.** They stream to real audiences every day; this has not met a relay.
+- 💬 **Interaction.** Chat, Q&A, polls and registration.
+- 🎬 **Recording, ingest and distribution.** Hosted replays, encoder ingest and multistreaming.
+- 📈 **Analytics, monetisation and mobile apps.**
 
-    cd ui && npm ci --ignore-scripts && npm run check && npm run typecheck && npm test
-    npm run build        # rebuilds ui/dist, which is committed
+> [!NOTE]
+> Leader columns are from public product information as of November 2026 and may change.
 
-## Changelog
+## 📍 Roadmap
 
-| Version | What changed |
-|---|---|
-| **0.1.1** | An interface of its own at `/live/`: the broadcasts (live now, upcoming, ended; cancel), planning one, a presenter's control page (device check and preview, go live, renewal with its refusals shown, end, viewers now, viewing and one-time presenter links), the watch page inside the shell (waiting, live, ended and replay, full with retry, renewal, reconnection, captions and keys, seat given up on leaving), an embeddable player component, and Live Settings (the key written, never read back). moq's two components bundled at their pinned versions. |
-| **0.1.0** | The first release: broadcasts about any record or alone, access by short-lived signed tokens through one relay interface (moq-relay 0.17.16), seats counted atomically, an audience ladder, viewing and presenter links, a page and embed description, counts, reports, replay links with retention, deploy files and a health check. |
+### ✅ Recently shipped
+
+- [x] **0.1.1** An interface of its own at `/live/`: broadcasts, planning, a presenter's control page, the watch page, settings and the `LivePlayer` component; the moq components bundled, so no page loads a third-party script.
+- [x] **0.1.0** The first release: broadcasts about any record or alone, short-lived signed access, atomic seats, the audience ladder, viewing and presenter links, an embed description, counts, reports, replay links with retention, deploy files and a health check.
+
+### 🔜 Next up
+
+- [ ] **Run it against a real relay.** Confirm that `moq auth serve` accepts the tokens signed here, that a relay with `--auth-url` admits a session at `{relay}/{path}?jwt=…`, the WebSocket fallback, and key rotation with two key files.
+- [ ] **Run the players in a browser with a camera.** That the bundled elements register and play under the shell's policy, that `<moq-publish>` takes the camera and microphone chosen, and the captions picker.
+- [ ] **Sign in through a real portal.** Portal people were simulated, not signed in through a portal.
+- [ ] **List Live in the platform's apps and server build,** so it installs from the store (docs/deploy.md says what the platform would add).
+- [ ] **A recorder beside the relay,** so a replay exists to link.
+
+### 🔭 Later
+
+**Presenting and ingest**
+- [ ] Wire moq's RTMP, SRT and WebRTC gateways, so an encoder such as OBS can feed a broadcast.
+- [ ] Screen sharing and layouts in the presenter studio.
+
+**Audience**
+- [ ] Chat, Q&A and polls.
+- [ ] Registration with reminders and follow-up.
+- [ ] Watch time and geography analytics.
+- [ ] Tickets or a paywall.
+
+**Product**
+- [ ] A calendar of broadcasts and a replay list.
+- [ ] Choosing who may present from the interface (the records form does it today).
+- [ ] The relay's health on the settings page (it shows only what the settings say).
+- [ ] Publish `LivePlayer` as a package.
+- [ ] More than one relay, with clustering in front.
+- [ ] Languages: built-in translations (every word already goes through the translation function).
+- [ ] Mobile presenting.
+
+## 🚀 Install
+
+Install the app from a Ferrum store, or by listing it in the server's build (docs/deploy.md, "What the platform would add"). Then:
+
+1. Run the relay beside Ferrum (docs/deploy.md): `moq-relay` 0.17.16 and its auth server, with a publicly trusted certificate for its name (browsers do not accept a self-signed one for WebTransport unless pinned), UDP buffers raised on the host, and a key file `keys/<kid>.jwk` made with `moq auth generate`.
+2. In **Live Settings**, give the relay address and health address, then **Set Signing Key** with the same key text.
+3. Set the same address under the app's settings (*Relay address for browsers*), so the interface inside Ferrum may connect there.
+4. Give people **Live User** to plan and present, and **Live Manager** for settings and every broadcast.
+5. Plan a broadcast, open its control page, choose the camera and microphone, and go live.
+
+Compose and Kubernetes files are in `deploy/` (`live.yml`, `live/relay.toml`, `k8s/live.yaml`).
+
+### What was not run against a real relay
+
+Every path to moq. The suite runs the fake behind `Relay`. Untested against the real thing: that `moq auth serve` accepts the tokens this app signs (only the signature scheme is checked, against a token moq's own JavaScript library signed); that a relay with `--auth-url` admits a session dialed at `{relay}/{path}?jwt=…`; the player and capture elements on these pages (including that the pinned script loads under the page's policy and that a changed `url` attribute reconnects); the WebSocket fallback; key rotation with two key files; the compose overlay and manifest; the relay's `/health` as the doctor asks it; that the platform lets a page set its own `Content-Security-Policy` on `/api/site/…`; and that the page, opened under `/api/app/live/…`, is identified as the signed-in person.
+
+For the interface, no relay, no browser with a camera and no server were used: the two moq elements registering and playing under the shell's policy; `<moq-publish>` taking the chosen camera and microphone; the connection status reporting a drop; the Opus fallback; the captions picker; full screen and the keys; and the shell serving `/live/` from `ui/dist`. The tests fake the components, the relay and every route, at `fetch`.
+
+## 🔧 Develop
+
+```bash
+export FERRUM_LIVE_TEST_DATABASE_URL=postgres://ferrum:ferrum@localhost:5432/ferrum_live_test
+cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test
+```
+
+The tests need PostgreSQL with an ordinary (non-superuser) role, so row-level security applies. The app builds against the platform's main branch (`.cargo/config.toml` points a checkout at it, git-ignored).
+
+The interface (`ui/`) builds with Ferrum-Frontend's packages from the sibling checkout (`../../ferrum/web`), as the other apps' do, and has moq's two components in `ui/node_modules`:
+
+```bash
+cd ui && npm ci --ignore-scripts && npm run check && npm run typecheck && npm test
+npm run build        # rebuilds ui/dist, which is committed
+```
+
+CI runs formatting, clippy with warnings denied and the Rust tests against a PostgreSQL service, then the interface checks.
+
+## 📂 Project layout
+
+```text
+app.yaml          the manifest: id, version, relay setting, what it adds to Ferrum
+packages/live/    entities, roles, events, personal-data rules, SQL
+src/              access, broadcast, health, links, page, relay (the one interface to moq), reports, seats, settings, site, upkeep
+ui/               its own interface (React + Vite): home, new, control, watch, settings, and the embeddable LivePlayer in ui/src/embed
+tests/            live_it.rs: one scenario against PostgreSQL
+deploy/           Compose overlay, relay.toml and the Kubernetes manifest
+docs/             deploy.md (running the relay), moq.md (what Live was built against)
+```
+
+## 📜 Changelog
+
+Every version is in [CHANGELOG.md](CHANGELOG.md).
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome at [github.com/CBFerrum/ferrum-app-live/issues](https://github.com/CBFerrum/ferrum-app-live/issues). Say whether a change was tried against a real relay.
+
+## 📄 License
+
+[AGPL-3.0-only](LICENSE), like the platform. moq is MIT or Apache-2.0; its OBS plugin (GPL-2.0-or-later) is not used.
+
+<div align="center">
+
+<sub>Part of <a href="https://github.com/CBFerrum/Ferrum">Ferrum</a>, the open business platform · Made with 🦀 Rust and 🐘 PostgreSQL</sub>
+
+</div>
