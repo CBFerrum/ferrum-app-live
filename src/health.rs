@@ -29,7 +29,7 @@ impl Health for RelayHealth {
                 }
             }
         }
-        match settings::signing_key(k, tx, self.relay.as_ref(), tenant).await {
+        match crate::keys::relay_key(k, tenant).await.and_then(|key| key.map(|key| settings::relay_key(self.relay.as_ref(), &key)).transpose()) {
             Ok(Some(_)) => {}
             Ok(None) => problems.push("Live Settings holds no signing key: nobody can be given access".into()),
             Err(e) => problems.push(e.to_string()),

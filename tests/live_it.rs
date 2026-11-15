@@ -156,6 +156,28 @@ fn nonce(n: u32) -> String {
     format!("browser-{n:04}-abcdefghijkl")
 }
 
+fn catalog() -> Catalog {
+    let mut packages = ferrum_domain::packages().expect("platform packages");
+    packages.extend(ferrum_app_live::packages().expect("app packages"));
+    Catalog::from_packages(packages).expect("catalog")
+}
+
+fn kernel_settings() -> KernelSettings {
+    KernelSettings { secret_key: Some(ferrum_kernel::secret::SecretKey::new([9u8; 32])), ctx_ttl: std::time::Duration::ZERO, ..Default::default() }
+}
+
+/// Live registered as the server registers it (as itself, so that it takes its own vault handle), and its handle.
+fn registered(relay: Arc<FakeRelay>) -> (HookRegistry, ferrum_kernel::vault::Vault) {
+    let mut hooks = HookRegistry::default();
+    ferrum_domain::register(&mut hooks);
+    let mut vault = None;
+    hooks.app("live", &[], |h| {
+        ferrum_app_live::register_with(h, relay);
+        vault = Some(h.vault());
+    });
+    (hooks, vault.expect("Live's handle"))
+}
+
 #[test]
 fn live_end_to_end() {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().thread_stack_size(16 << 20).build().unwrap();
@@ -163,19 +185,20 @@ fn live_end_to_end() {
 }
 
 async fn scenario() {
-    let url = std::env::var("FERRUM_LIVE_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_live_test".into());
-    let db = Db::connect(DbConfig { url, max_connections: 24, ..Default::default() }).await.expect("connect");
-    sqlx::raw_sql("drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
-    let mut packages = ferrum_domain::packages().expect("platform packages");
-    packages.extend(ferrum_app_live::packages().expect("app packages"));
-    let catalog = Catalog::from_packages(packages).expect("catalog");
+    let db_url = std::env::var("FERRUM_LIVE_TEST_DATABASE_URL").unwrap_or_else(|_| "postgres://ferrum:ferrum@localhost:5432/ferrum_live_test".into());
+    let db = Db::connect(DbConfig { url: db_url.clone(), max_connections: 24, ..Default::default() }).await.expect("connect");
+    sqlx::raw_sql("drop schema if exists vault cascade; drop schema if exists public cascade; create schema public;").execute(&db.pool).await.expect("reset");
+    // The vault, opened as a server opens it (its credential slot, from the address's password), once migrated.
+    let opener = ferrum_kernel::vault::Opener {
+        database_url: db_url.clone(),
+        file: "/nonexistent/root.key".into(),
+        kdf: ferrum_kernel::vault::Kdf { m_kib: 64, t: 1, p: 1 },
+        ..Default::default()
+    };
+    ferrum_kernel::vault::open(&db, opener, false).await.expect("the vault");
     let relay = Arc::new(FakeRelay::new());
-    let mut hooks = HookRegistry::default();
-    ferrum_domain::register(&mut hooks);
-    ferrum_app_live::register_with(&mut hooks, relay.clone());
-    let settings =
-        KernelSettings { secret_key: Some(ferrum_kernel::secret::SecretKey::new([9u8; 32])), ctx_ttl: std::time::Duration::ZERO, ..Default::default() };
-    let k = Kernel::boot(db, catalog, hooks, settings, None).await.expect("boot");
+    let (hooks, live_vault) = registered(relay.clone());
+    let k = Kernel::boot(db, catalog(), hooks, kernel_settings(), None).await.expect("boot");
     let t = T { k: k.clone(), relay };
 
     let acme = t.tenant("acme").await;
@@ -592,4 +615,142 @@ async fn scenario() {
     // ───────────── a second workspace shares nothing ─────────────
     let other = t.tenant("globex").await;
     refused(t.watch(&other, None, live, json!({"seat": nonce(900)})).await, "not found");
+
+    // ───────────── keys in the vault (src/keys.rs) ─────────────
+    let scope = ferrum_kernel::vault::Scope::Workspace(acme.id);
+    // The relay's key has one home: Live's secret in the vault, the key as it was given (what the relay's key directory
+    // holds). The sealed field the build before reads holds the same, for it.
+    let held = live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().expect("the relay's key");
+    assert!(held.rule.reveal && held.version == 1, "the relay holds the same secret: {held:?}");
+    assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-1");
+    let field = |k: Arc<Kernel>| async move {
+        let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
+        let f = k.secret(&mut tx, acme.id, "LiveSettings", set, "signing_key").await.unwrap();
+        tx.commit().await.unwrap();
+        f
+    };
+    assert_eq!(field(k.clone()).await.as_deref(), Some("key-1"));
+    // A workspace upgraded from 0.1: the key in the sealed field only. The first token moves it into the vault.
+    let as_before = |key: &str| {
+        let (k, mira, key) = (k.clone(), mira.clone(), key.to_string());
+        async move {
+            let values = json!({"signing_key": key, "signing_key_id": key, "key_changed_at": chrono::Utc::now().to_rfc3339()});
+            k.update(&ferrum_domain::util::elevated(&mira), "LiveSettings", set, obj(values), None).await.unwrap();
+        }
+    };
+    assert!(live_vault.remove(&k, scope, "relay-signing-key").await.unwrap());
+    as_before("key-0").await;
+    let moved = t.broadcast(&asha, json!({"title": "Moved", "audience": "Public"})).await;
+    let (_, started) = t.post(&acme, Some(&asha), moved, "publish", Value::Null).await.unwrap();
+    assert!(started["token"].as_str().unwrap().starts_with("fake.key-0."), "{started}");
+    assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-0", "moved into the vault");
+    // The build before sets another after a rollback: upkeep takes it, once, so the two never differ for long.
+    as_before("key-2").await;
+    ferrum_app_live::maintenance(&k).await.unwrap();
+    assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-2");
+    ferrum_app_live::maintenance(&k).await.unwrap();
+    assert_eq!(live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().map(|d| d.version), Some(2), "once");
+    // This build's Set Signing Key writes both, so upkeep changes nothing.
+    k.run_action(&mira, "LiveSettings", set, "set_signing_key", json!({"key": "key-3"})).await.unwrap();
+    ferrum_app_live::maintenance(&k).await.unwrap();
+    assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-3");
+    assert_eq!(
+        (field(k.clone()).await.as_deref(), live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().map(|d| d.version)),
+        (Some("key-3"), Some(3))
+    );
+    // Seats: a viewer watching across the upgrade keeps the seat the old key gave them, once.
+    let old_key = [6u8; 32];
+    let old_seat = |broadcast: Uuid, n: u32| {
+        use hmac::Mac;
+        let who = nonce(n);
+        let mut m = hmac::Hmac::<sha2::Sha256>::new_from_slice(&old_key).unwrap();
+        for part in [broadcast.as_bytes().as_slice(), b"browser", who.as_bytes()] {
+            m.update(&(part.len() as u32).to_be_bytes());
+            m.update(part);
+        }
+        hex::encode(m.finalize().into_bytes())
+    };
+    {
+        let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
+        sqlx::query("insert into live_secret (tenant_id, secret) values ($1, $2)").bind(acme.id).bind(&old_key[..]).execute(&mut *tx).await.unwrap();
+        sqlx::query("insert into live_seat (tenant_id, broadcast, seat) values ($1, $2, $3)")
+            .bind(acme.id)
+            .bind(moved)
+            .bind(old_seat(moved, 950))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+    let (st, _) = t.post(&acme, None, moved, "watch/refresh", json!({"seat": nonce(950)})).await.unwrap();
+    assert_eq!(st, 200, "their seat is theirs still");
+    assert_eq!(t.scalar::<i64>(&acme, "select count(*) from live_seat where tenant_id = $1 and broadcast = $2", moved).await, 1, "and counts once");
+    let old = live_vault.describe(&k, scope, "old-seat-key").await.unwrap().expect("moved");
+    let retired = t
+        .scalar::<i64>(&acme, "select floor(extract(epoch from retired_at))::bigint from live_secret where tenant_id = $1 and $2::uuid is not null", moved)
+        .await;
+    assert_eq!((old.version, old.rule.reveal, old.rule.expires_at.unwrap().timestamp() - retired), (1, false, 7200), "for two hours");
+    // From now on nothing reads the unsealed table: seats are hashed and found without it.
+    let ddl = |q: &'static str| {
+        let k = k.clone();
+        async move {
+            let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
+            sqlx::raw_sql(q).execute(&mut *tx).await.unwrap();
+            tx.commit().await.unwrap();
+        }
+    };
+    ddl("alter table live_secret rename to live_secret_parked").await;
+    t.watch(&acme, None, moved, json!({"seat": nonce(951)})).await.unwrap();
+    assert_eq!(t.post(&acme, None, moved, "watch/refresh", json!({"seat": nonce(951)})).await.unwrap().0, 200);
+    assert_eq!(t.post(&acme, None, moved, "watch/refresh", json!({"seat": nonce(950)})).await.unwrap().0, 200, "the moved seat too");
+    ddl("alter table live_secret_parked rename to live_secret").await;
+    // Past its two hours the old key finds no seat.
+    assert!(live_vault.remove(&k, scope, "old-seat-key").await.unwrap());
+    t.sql(&acme, "update live_secret set retired_at = now() - interval '3 hours' where tenant_id = $1 and $2::uuid is not null", moved).await;
+    {
+        let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
+        sqlx::query("insert into live_seat (tenant_id, broadcast, seat) values ($1, $2, $3)")
+            .bind(acme.id)
+            .bind(moved)
+            .bind(old_seat(moved, 952))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+    refused(t.post(&acme, None, moved, "watch/refresh", json!({"seat": nonce(952)})).await, "not found");
+    // A sandbox (a copy under another id, marked as the platform marks one) never takes the old key.
+    let copy = t.tenant("acme-try").await;
+    {
+        let mut tx = k.db.system_tx().await.unwrap();
+        for q in [
+            "alter table tenant disable trigger tenant_sandbox_kept",
+            "update tenant set sandbox_of = $1, sandbox_from = 'here', sandbox_until = current_date + 30 where id = $2",
+            "alter table tenant enable trigger tenant_sandbox_kept",
+            "insert into live_secret (tenant_id, secret) select $2, secret from live_secret where tenant_id = $1",
+        ] {
+            sqlx::query(q).bind(acme.id).bind(copy.id).execute(&mut *tx).await.unwrap();
+        }
+        tx.commit().await.unwrap();
+    }
+    ferrum_app_live::maintenance(&k).await.unwrap();
+    let copy_scope = ferrum_kernel::vault::Scope::Workspace(copy.id);
+    assert!(live_vault.describe(&k, copy_scope, "old-seat-key").await.unwrap().is_none(), "never in a sandbox");
+    assert_eq!(
+        t.scalar::<i64>(&copy, "select count(*) from live_secret where tenant_id = $1 and retired_at is not null and $2::uuid is not null", moved).await,
+        1
+    );
+
+    // ───────────── a replica whose vault is closed: Live refuses access, plainly ─────────────
+    // (Last: registering Live again gives the process that kernel's handle.)
+    let db = Db::connect(DbConfig { url: db_url, max_connections: 8, ..Default::default() }).await.expect("connect");
+    let (hooks, _) = registered(t.relay.clone());
+    let closed = Kernel::boot(db, catalog(), hooks, kernel_settings(), None).await.expect("it starts with the vault closed");
+    let t = T { k: closed, relay: t.relay.clone() };
+    for e in [
+        refused(t.watch(&acme, None, moved, json!({"seat": nonce(960)})).await, "unavailable"),
+        refused(t.post(&acme, Some(&asha), moved, "publish/refresh", Value::Null).await, "unavailable"),
+    ] {
+        assert_eq!(e, "Live cannot give access right now: its keys are unavailable");
+    }
 }

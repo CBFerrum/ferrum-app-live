@@ -28,6 +28,13 @@ pub struct RelayKey {
     secret: Vec<u8>,
 }
 
+impl RelayKey {
+    /// Whether `other` holds the same secret (in constant time).
+    pub fn same_secret(&self, other: &RelayKey) -> bool {
+        self.secret.len() == other.secret.len() && self.secret.iter().zip(&other.secret).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
+    }
+}
+
 impl std::fmt::Debug for RelayKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "RelayKey({})", self.kid)
@@ -266,5 +273,9 @@ mod tests {
         assert!(bad(&JS_KEY.replace("xm6xsSkfFqzPU3KfcbAcF2_h0OkStxQ_nNqVPYl0ync", "c2hvcnQ")).contains("32 bytes"));
         assert!(bad(&JS_KEY.replace(r#"["sign","verify"]"#, r#"["verify"]"#)).contains("may not sign"));
         assert!(!format!("{:?}", MoqRelay.parse_key(JS_KEY).unwrap()).contains("xm6x"), "the secret does not print");
+        // One name, two secrets: what Set Signing Key refuses, since the relay holds one file a name.
+        let same = MoqRelay.parse_key(JS_KEY).unwrap();
+        let other = MoqRelay.parse_key(&JS_KEY.replace("xm6xsSkfFqzPU3KfcbAcF2_h0OkStxQ_nNqVPYl0ync", "Fp8kipWUJeUFqeSqWym_tRC_tyI8z-QpqopIGrbrD68")).unwrap();
+        assert!(same.same_secret(&MoqRelay.parse_key(JS_KEY).unwrap()) && !same.same_secret(&other) && same.kid == other.kid);
     }
 }

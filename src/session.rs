@@ -4,7 +4,7 @@
 
 use crate::access::{self, Viewer};
 use crate::relay::{Access, Relay};
-use crate::{broadcast, doc_id, links, s, seats, settings, ts};
+use crate::{broadcast, doc_id, keys, links, s, seats, settings, ts};
 use chrono::Duration;
 use ferrum_kernel::{Ctx, Doc, Error, Kernel, Result, Tx};
 use serde_json::{Value, json};
@@ -59,10 +59,12 @@ fn state(set: &settings::Settings, doc: &Doc) -> Value {
     json!({"status": status, "title": s(doc, "title"), "text": text, "planned_start": s(doc, "planned_start"), "replay_url": replay, "replay_text": replay.map(|_| set.text("text_replay"))})
 }
 
-async fn offer(relay: &dyn Relay, k: &Kernel, tx: &mut Tx, set: &settings::Settings, tenant: Uuid, id: Uuid, access: Access) -> Result<Value> {
-    let (Some(url), Some(key)) = (set.relay_url(), settings::signing_key(k, tx, relay, tenant).await?) else {
+/// Access to the broadcast's path, signed with the relay's key (`key`, as [`keys::relay_key`] gave it).
+fn offer(relay: &dyn Relay, set: &settings::Settings, tenant: Uuid, id: Uuid, access: Access, key: Option<&[u8]>) -> Result<Value> {
+    let (Some(url), Some(key)) = (set.relay_url(), key) else {
         return Err(Error::Unavailable("live video is not set up in this workspace".into()));
     };
+    let key = settings::relay_key(relay, key)?;
     let minutes = if access == Access::Watch { set.watch_minutes() } else { set.publish_minutes() };
     let expires = crate::now() + Duration::minutes(minutes);
     let path = crate::path_of(&set.prefix(), tenant, id);
@@ -102,6 +104,9 @@ fn seat_kind(v: &Viewer) -> &'static str {
 
 /// `renew`: keep a seat that is live (and refuse when it is not); otherwise take one, if there is one to take.
 pub async fn watch(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &Caller<'_>, renew: bool) -> Result<Outcome> {
+    // Live's keys, taken before the transaction: the vault answers on a connection of its own.
+    let seat_key = keys::current(k, tenant, keys::SEATS).await?;
+    let relay_key = keys::relay_key(k, tenant).await?;
     let sys = system(k, tenant).await?;
     let mut tx = k.db.tenant_tx(tenant).await?;
     let set = settings::load(k, &sys, &mut tx).await?;
@@ -117,10 +122,16 @@ pub async fn watch(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &
         }
         return Ok(Outcome::State(state(&set, &doc)));
     }
-    let seat = seats::key(&mut tx, tenant, id, seat_kind(&viewer), &ident).await?;
+    let message = seats::message(id, seat_kind(&viewer), &ident);
+    let seat = seats::key(seat_key.bytes(), &message);
     let win = window(&set);
-    if seats::renew(&mut tx, tenant, id, &seat, win).await? {
-        let out = offer(relay, k, &mut tx, &set, tenant, id, Access::Watch).await?;
+    let mut kept = seats::renew(&mut tx, tenant, id, &seat, win).await?;
+    // Someone watching across the upgrade keeps the seat the old key gave them (keys.rs).
+    if !kept && let Some(old) = keys::old_hash(k, tenant, &message).await? {
+        kept = seats::rekey(&mut tx, tenant, id, &hex::encode(old), &seat, win).await?;
+    }
+    if kept {
+        let out = offer(relay, &set, tenant, id, Access::Watch, relay_key.as_deref().map(|k| k.as_slice()))?;
         tx.commit().await?;
         return Ok(Outcome::Offer(out));
     }
@@ -144,7 +155,7 @@ pub async fn watch(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &
                     .execute(&mut *tx)
                     .await?;
             }
-            let out = offer(relay, k, &mut tx, &set, tenant, id, Access::Watch).await?;
+            let out = offer(relay, &set, tenant, id, Access::Watch, relay_key.as_deref().map(|k| k.as_slice()))?;
             tx.commit().await?;
             Ok(Outcome::Offer(out))
         }
@@ -153,13 +164,14 @@ pub async fn watch(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &
 
 /// A viewer gives their seat up.
 pub async fn leave(k: &Kernel, tenant: Uuid, id: Uuid, who: &Caller<'_>) -> Result<()> {
+    let seat_key = keys::current(k, tenant, keys::SEATS).await?;
     let sys = system(k, tenant).await?;
     let mut tx = k.db.tenant_tx(tenant).await?;
     let set = settings::load(k, &sys, &mut tx).await?;
     let doc = read(k, &sys, &mut tx, id).await?;
     // Whoever the seat is of may give it up, as they are known now; a person who lost the right has nothing to ask for.
     let Some((viewer, ident)) = viewer(k, &mut tx, &set, &doc, tenant, id, who).await? else { return Err(gone()) };
-    let seat = seats::key(&mut tx, tenant, id, seat_kind(&viewer), &ident).await?;
+    let seat = seats::key(seat_key.bytes(), &seats::message(id, seat_kind(&viewer), &ident));
     seats::leave(&mut tx, tenant, id, &seat).await?;
     tx.commit().await?;
     Ok(())
@@ -167,6 +179,8 @@ pub async fn leave(k: &Kernel, tenant: Uuid, id: Uuid, who: &Caller<'_>) -> Resu
 
 /// A presenter's side. `renew`: only while Live (a presenter link renews after the one start it has).
 pub async fn present(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &Caller<'_>, renew: bool) -> Result<Value> {
+    // The relay's key, taken before the transaction.
+    let relay_key = keys::relay_key(k, tenant).await?;
     let sys = system(k, tenant).await?;
     let mut tx = k.db.tenant_tx(tenant).await?;
     let set = settings::load(k, &sys, &mut tx).await?;
@@ -199,7 +213,7 @@ pub async fn present(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who:
     }
     broadcast::go_live(k, &sys, &mut tx, &doc, (&name, email.as_deref())).await?;
     sqlx::query("update e_broadcast set last_publish_at = now() where tenant_id = $1 and id = $2").bind(tenant).bind(id).execute(&mut *tx).await?;
-    let mut out = offer(relay, k, &mut tx, &set, tenant, id, Access::Publish).await?;
+    let mut out = offer(relay, &set, tenant, id, Access::Publish, relay_key.as_deref().map(|k| k.as_slice()))?;
     out["recording"] = json!(set.recording(&doc));
     out["status"] = json!("Live");
     tx.commit().await?;
