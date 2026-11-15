@@ -175,6 +175,8 @@ fn registered(relay: Arc<FakeRelay>) -> (HookRegistry, ferrum_kernel::vault::Vau
         ferrum_app_live::register_with(h, relay);
         vault = Some(h.vault());
     });
+    // It owns its packages, as the server says: a secret field one of them declares is Live's.
+    hooks.own("live", &ferrum_app_live::packages().unwrap().iter().map(|p| p.name().to_string()).collect::<Vec<_>>());
     (hooks, vault.expect("Live's handle"))
 }
 
@@ -623,11 +625,14 @@ async fn scenario() {
     let held = live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().expect("the relay's key");
     assert!(held.rule.reveal && held.version == 1, "the relay holds the same secret: {held:?}");
     assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-1");
-    let field = |k: Arc<Kernel>| async move {
-        let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
-        let f = k.secret(&mut tx, acme.id, "LiveSettings", set, "signing_key").await.unwrap();
-        tx.commit().await.unwrap();
-        f
+    let field = |k: Arc<Kernel>| {
+        let v = live_vault.clone();
+        async move {
+            let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
+            let f = v.field(&k, &mut tx, acme.id, "LiveSettings", set, "signing_key").await.unwrap().map(|f| f.to_string());
+            tx.commit().await.unwrap();
+            f
+        }
     };
     assert_eq!(field(k.clone()).await.as_deref(), Some("key-1"));
     // A workspace upgraded from 0.1: the key in the sealed field only. The first token moves it into the vault.
@@ -740,6 +745,12 @@ async fn scenario() {
         t.scalar::<i64>(&copy, "select count(*) from live_secret where tenant_id = $1 and retired_at is not null and $2::uuid is not null", moved).await,
         1
     );
+
+    // Every secret field Live read it read with its own handle: none past the vault, which the platform notes
+    // (`ferrum task legacy_key`) in the background.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let past: Vec<_> = k.legacy_key(vec![]).await.unwrap().uses.into_iter().filter(|u| u.0.starts_with("reader:")).map(|u| u.1).collect();
+    assert!(past.is_empty(), "read past the vault: {past:?}");
 
     // ───────────── a replica whose vault is closed: Live refuses access, plainly ─────────────
     // (Last: registering Live again gives the process that kernel's handle.)

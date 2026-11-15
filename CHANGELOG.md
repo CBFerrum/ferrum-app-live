@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+Needs a platform with the vault's field reader (0.3.8 on the platform's main from cdec881). No database or interface change.
+
+- **Live reads Live Settings' sealed `signing_key` with its own handle on the vault**, in the same transaction as before, instead of the platform's reader that any app could use, which is deprecated.
+- **Set Signing Key on a workspace where Live had used the vault for nothing yet** waited until its database lock timed out and said "its keys are unavailable", once the server says which app owns each package (the platform's main from cdec881 does): writing the field made Live's key in the workspace inside the action's transaction, and the vault's write beside it, on another connection, waited on that. Live's key is now made first, on its own.
+
 ## 0.2.0
 
 Needs a platform with the vault (Ferrum `8e6b1f0` or later). A database change (`live/002_keys.sql`: the column
