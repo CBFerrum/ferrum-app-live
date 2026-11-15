@@ -13,6 +13,7 @@
 mod access;
 mod broadcast;
 mod health;
+mod keys;
 mod links;
 mod module;
 mod page;
@@ -49,8 +50,10 @@ pub fn register(hooks: &mut HookRegistry) {
     register_with(hooks, Arc::new(relay::MoqRelay));
 }
 
-/// [`register`] with another relay behind the interface (a test's).
+/// [`register`] with another relay behind the interface (a test's). Call either inside the platform's registration
+/// of the app, `hooks.app("live", …)`: Live takes its own vault handle there (its keys, `keys.rs`).
 pub fn register_with(hooks: &mut HookRegistry, relay: Arc<dyn relay::Relay>) {
+    keys::remember(hooks.vault());
     hooks
         .register("LiveSettings", Arc::new(settings::SettingsHook { relay: relay.clone() }))
         .register("Broadcast", Arc::new(broadcast::BroadcastHook))
@@ -64,8 +67,9 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
     vec![Arc::new(reports::LiveReports)]
 }
 
-/// Periodic upkeep, every minute on one replica at a time: ends broadcasts nobody presents, forgets seats and
-/// clears replay links past their retention. Idempotent and cheap.
+/// Periodic upkeep, every minute on one replica at a time: moves into the vault the keys kept outside it before 0.2
+/// (`keys.rs`), ends broadcasts nobody presents, forgets seats and clears replay links past their retention. Idempotent
+/// and cheap.
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     upkeep::run(k).await
 }

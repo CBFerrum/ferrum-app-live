@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.1.1-be123c?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-be123c?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -41,7 +41,7 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 
 | | |
 |---|---|
-| 📦 Version | `0.1.1` |
+| 📦 Version | `0.2.0` |
 | 🧱 Kind | Own interface at `/live/`, plus the app's own pages for people with no account |
 | 🗃️ What it adds | 4 entities in the `live` package: Broadcast, Presenter (child), Broadcast Link, Live Settings |
 | 👥 Roles | 2: Live User, Live Manager |
@@ -141,7 +141,7 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 
 - **One interface to the relay.** `src/relay.rs` is the only place that knows the relay. A token is for exactly this broadcast's path, with one right and an expiry (10 minutes for viewers and 60 for presenters by default), and nothing else, since moq refuses a claim it does not know.
 - **Re-decided each time.** Renewal re-decides every right from scratch, so a person who loses the right is stopped at their next renewal, and a revoked link or an ended broadcast cannot renew.
-- **Signing key.** An HS256 key (a JWK from `moq auth generate`) set with **Set Signing Key**, sealed and never shown. Rotate without dropping anyone by adding a new key file beside the old one, then setting the new key.
+- **Signing key.** An HS256 key (a JWK from `moq auth generate`) set with **Set Signing Key**, kept in the platform's vault as the relay's key directory holds it, and never shown. A key named as the one in use but with another secret is refused. Rotate without dropping anyone by adding a new key file, under a new name, beside the old one, then setting the new key.
 - **Personal data.** A presenter's name and address, on a broadcast or a link, are found by address and blanked on erasure. Seats hold none.
 
 ### 🧩 Embedding in other apps
@@ -204,7 +204,7 @@ A broadcast's status moves only through the app. Ended keeps its counts and an o
 | Broadcast | One live video from a presenter to an audience | Scheduled / Live / Ended / Cancelled, audience, capacity, reference entity and id, presenters, frame origins, viewers peak and total |
 | Presenter (child) | A person who may start a broadcast | email, name |
 | Broadcast Link | A viewing or presenter link | Viewer / Presenter, expiry, used at, revoked at; only a hash of the secret is kept |
-| Live Settings | The relay, tokens, defaults, replay and wording | relay address, signing key (sealed), lifetimes, retention |
+| Live Settings | The relay, tokens, defaults, replay and wording | relay address, signing key's name (the key is in the vault), lifetimes, retention |
 
 Behind them, two tables hold seats (keyed hashes, no names) and the secret those hashes use, both with row-level security.
 
@@ -275,6 +275,7 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 ### ✅ Recently shipped
 
+- [x] **0.2.0** The relay's key has one home, the platform's vault; seats are hashed with a key from it.
 - [x] **0.1.1** An interface of its own at `/live/`: broadcasts, planning, a presenter's control page, the watch page, settings and the `LivePlayer` component; the moq components bundled, so no page loads a third-party script.
 - [x] **0.1.0** The first release: broadcasts about any record or alone, short-lived signed access, atomic seats, the audience ladder, viewing and presenter links, an embed description, counts, reports, replay links with retention, deploy files and a health check.
 

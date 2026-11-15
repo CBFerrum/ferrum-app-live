@@ -9,7 +9,6 @@ use async_trait::async_trait;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, HookCtx, Kernel, Result, Tx};
 use serde_json::{Value, json};
 use std::sync::Arc;
-use uuid::Uuid;
 
 pub struct Settings {
     row: Doc,
@@ -101,16 +100,11 @@ pub async fn load(k: &Kernel, ctx: &Ctx, tx: &mut Tx) -> Result<Settings> {
     Ok(Settings { row, ctx: sys })
 }
 
-/// The signing key, opened. `None` until an administrator has set one.
-pub async fn signing_key(k: &Kernel, tx: &mut Tx, relay: &dyn Relay, tenant: Uuid) -> Result<Option<RelayKey>> {
-    let id: Option<Uuid> = sqlx::query_scalar("select id from e_live_settings where tenant_id = $1 limit 1").bind(tenant).fetch_optional(&mut **tx).await?;
-    let Some(id) = id else { return Ok(None) };
-    match k.secret(tx, tenant, "LiveSettings", id, "signing_key").await? {
-        Some(material) => {
-            relay.parse_key(&material).map(Some).map_err(|_| Error::Unavailable("the relay's signing key in Live Settings cannot be used: set it again".into()))
-        }
-        None => Ok(None),
-    }
+/// The relay's signing key as it is used: the JWK the vault holds for it (`keys::relay_key`), read.
+pub fn relay_key(relay: &dyn Relay, material: &[u8]) -> Result<RelayKey> {
+    relay
+        .parse_key(&String::from_utf8_lossy(material))
+        .map_err(|_| Error::Unavailable("the relay's signing key in Live Settings cannot be used: set it again".into()))
 }
 
 pub struct SettingsHook {
@@ -141,16 +135,43 @@ impl DocHook for SettingsHook {
         Ok(())
     }
 
-    /// `set_signing_key {key}`: checks the key and keeps it sealed, with its name; the key is never shown again.
+    /// `set_signing_key {key}`: checks the key and keeps it in the vault, its one home (and, for the build before this
+    /// one, in the sealed field), with its name; the key is never shown again. A key under the name of the one in use but
+    /// with another secret is refused: the relay holds one file a name, and the two would differ without anyone seeing it
+    /// until people cannot watch.
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         if name != "set_signing_key" {
             return Ok(None);
         }
         let material = params.get("key").and_then(Value::as_str).unwrap_or_default();
         let key = self.relay.parse_key(material)?;
-        let values = json!({"signing_key": material.trim(), "signing_key_id": key.kid, "key_changed_at": crate::ts(crate::now())});
+        let changed_at = crate::now();
+        // The key in use: the vault's, else the one the sealed field still holds from before. (In the action's
+        // transaction, which holds the settings' row: the vault answers on a second connection.)
+        let current = match crate::keys::held_relay_key(hc.kernel, hc.ctx.tenant).await? {
+            Some(key) => Some(String::from_utf8_lossy(&key).into_owned()),
+            None => hc.kernel.secret(hc.tx, hc.ctx.tenant, "LiveSettings", doc_id(doc)?, "signing_key").await?,
+        };
+        if let Some(current) = current
+            && let Ok(current) = self.relay.parse_key(&current)
+            && current.kid == key.kid
+            && !current.same_secret(&key)
+        {
+            return Err(Error::field(
+                "key",
+                format!(
+                    "the key in use is named {} too, with another secret, and the relay holds one key of a name: give the new key a name of its own",
+                    key.kid
+                ),
+            ));
+        }
+        // The sealed field first, for the build before this one, which reads it (this update holds the settings' row
+        // until the action commits), then the vault, the key's home: upkeep compares the two under that row's lock and
+        // takes the field's when they differ (keys.rs), so a failed action leaves the key that was.
+        let values = json!({"signing_key": material.trim(), "signing_key_id": key.kid, "key_changed_at": crate::ts(changed_at)});
         let values = values.as_object().cloned().unwrap_or_default();
         hc.kernel.update_tx(&crate::elevated(hc.ctx), hc.tx, "LiveSettings", doc_id(doc)?, values, None).await?;
+        crate::keys::set_relay(hc.kernel, hc.ctx.tenant, material.trim()).await?;
         Ok(Some(json!({"key_id": key.kid})))
     }
 }

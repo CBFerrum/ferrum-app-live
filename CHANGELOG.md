@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.2.0
+
+Needs a platform with the vault (Ferrum `8e6b1f0` or later). A database change (`live/002_keys.sql`: the column
+`live_secret.retired_at`) is applied at startup; nothing existing moves. No interface change.
+
+**The relay's signing key has one home.** It was kept twice: sealed in Live Settings (`signing_key`) and as the file
+`keys/{kid}.jwk` the relay's auth server reads, two copies typed in by hand that nothing compared. It now lives as
+Live's secret `relay-signing-key` in the workspace's vault: the key exactly as given to Set Signing Key, which is the
+JWK `moq auth generate` writes and the relay's key directory holds. Its rule lets it out (`reveal`), because the relay
+must hold the same secret: Live reads it for each token, and only from there. A key from before moves from the field
+into the vault the first time a token is needed or at the next upkeep, once. The build before this one still reads the
+sealed field, so Set Signing Key still writes it, first, then the vault; upkeep compares the two each minute under the
+settings' row lock and takes the field's when they differ (the build before set a key after a rollback, or an action
+failed after its vault write), so they never differ for long; the release after this one stops writing the field.
+**The relay's file** stays what
+the relay reads: whatever gives companion programs their files from the vault at their start (the platform's
+`ferrum render`, to come) writes, for each workspace with Live, `{kid}.jwk` in the relay's key directory with the
+secret's value byte for byte (the auth server reads it per request: a new key needs no restart). Until then the
+administrator writes it, with the same text given to Set Signing Key (docs/deploy.md). **The two cannot differ
+silently under one name**: Set Signing Key refuses a key named as the one in use with another secret, since the relay
+holds one file a name; a new key takes a new name (rotation without dropping anyone, as before).
+
+**Seats are hashed with a key from the vault.** The seats' key was kept unsealed in `live_secret`. Seats are now keyed
+hashes under a key derived from Live's own key in the vault (`seat-hashes`), made when needed and kept nowhere. A viewer
+watching across the upgrade keeps their seat: the old key moves into the vault, sealed, as `old-seat-key`, and for two
+hours after it stopped (`live_secret.retired_at`: a viewer's token lives an hour at most, the other hour covers the
+upgrade rolling out) finds the seat it made, which then takes the new hash, counting once. It moves once, even with
+replicas starting together (its row is locked without waiting). From then on this build never reads `live_secret`; the
+build before still does, so its rows stay until the release after this one deletes them.
+
+**When the vault is closed** (an installation with nothing to open its root with), watching, renewing, presenting and
+leaving are refused with "Live cannot give access right now: its keys are unavailable", and the doctor says so. No
+token is signed another way.
+
+**A sandbox** has keys of its own: its seats are hashed with its own key, it never takes the old one, and the relay's
+key is not copied there (a sandbox gets no sealed field of the live workspace, and the vault's keys do not travel), so
+an administrator sets one before anyone watches in a copy.
+
+**A workspace moved to another installation**: the platform's move copies the workspace's tables, not its keys in the
+vault. Seats are counted again from the move on. The relay's key travels in Live Settings' sealed field (written
+through this release) and moves into the new installation's vault at the first token there.
+
+**For other apps' tests**: Live takes its vault handle as it registers, so register it as the server does,
+`hooks.app("live", &[], ferrum_app_live::register)`; called outside that, the kernel refuses to boot.
+
+Tests: the end-to-end suite opens the vault and registers Live as the server does. The relay's key is in the vault as
+given, and in the field for the build before; a key in the field from before moves at the first token; another one the
+build before writes after a rollback is taken once by upkeep, and this build's own changes nothing there; a seat the old
+key made is kept by its viewer and counts once, for two hours and not after; seats are hashed and found with
+`live_secret` out of reach; a sandbox never takes the old key; a replica whose vault is closed refuses plainly. A unit
+test shows one name with two secrets told apart.
+
+Not in this release: writing the relay's key file from the vault (the platform's `ferrum render`); an asymmetric key, so
+that the relay would hold only a public key; the rows of `live_secret` and the sealed field's value (the release after
+this one).
+
 ## 0.1.1
 
 An interface of its own at `/live/` (`ui/`, built with Ferrum-Frontend's packages; `ui/dist` committed), all against routes and records
