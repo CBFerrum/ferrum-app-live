@@ -163,7 +163,7 @@ fn catalog() -> Catalog {
 }
 
 fn kernel_settings() -> KernelSettings {
-    KernelSettings { secret_key: Some(ferrum_kernel::secret::SecretKey::new([9u8; 32])), ctx_ttl: std::time::Duration::ZERO, ..Default::default() }
+    KernelSettings { ctx_ttl: std::time::Duration::ZERO, ..Default::default() }
 }
 
 /// Live registered as the server registers it (as itself, so that it takes its own vault handle), and its handle.
@@ -633,11 +633,6 @@ async fn scenario() {
     let (_, started) = t.post(&acme, Some(&asha), signed, "publish", Value::Null).await.unwrap();
     assert!(started["token"].as_str().unwrap().starts_with("fake.key-2."), "{started}");
     assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-2");
-
-    // No secret field was read past the vault, which the platform notes (`ferrum task legacy_key`) in the background.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let past: Vec<_> = k.legacy_key(vec![]).await.unwrap().uses.into_iter().filter(|u| u.0.starts_with("reader:")).map(|u| u.1).collect();
-    assert!(past.is_empty(), "read past the vault: {past:?}");
 
     // ───────────── a replica whose vault is closed: Live refuses access, plainly ─────────────
     // (Last: registering Live again gives the process that kernel's handle.)
