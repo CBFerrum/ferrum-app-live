@@ -17,7 +17,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use ferrum_kernel::vault::{Derived, New, Rule, Scope, Vault, Zeroizing};
-use ferrum_kernel::{Error, Kernel, Result};
+use ferrum_kernel::{Error, Kernel, Result, Tx};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::sync::RwLock;
@@ -47,6 +47,12 @@ pub(crate) fn remember(v: Vault) {
 
 fn handle() -> Result<Vault> {
     VAULT.read().unwrap_or_else(|e| e.into_inner()).clone().ok_or_else(|| Error::Unavailable("Live was registered without its vault handle".into()))
+}
+
+/// The value of one of Live's own secret fields (Live Settings' `signing_key`), read in `tx` with its handle: none when
+/// it is not set. A closed vault refuses, plainly.
+pub(crate) async fn field(k: &Kernel, tx: &mut Tx, tenant: Uuid, entity: &str, record: Uuid, field: &str) -> Result<Option<Zeroizing<String>>> {
+    handle()?.field(k, tx, tenant, entity, record, field).await.map_err(unavailable)
 }
 
 /// What a person or a caller is told when the vault cannot be used; why goes to the log.
@@ -130,6 +136,13 @@ pub(crate) async fn set_relay(k: &Kernel, tenant: Uuid, material: &str) -> Resul
     handle()?.set(k, Scope::Workspace(tenant), RELAY, value, rule).await.map_err(unavailable).map(|_| ())
 }
 
+/// Makes Live's own key in the workspace if it has none yet, in a transaction of its own; before Live writes its secret
+/// field in a transaction it then uses the vault beside (Set Signing Key), which would otherwise make the key in that
+/// transaction and wait on itself.
+pub(crate) async fn ready(k: &Kernel, tenant: Uuid) -> Result<()> {
+    handle()?.seal(k, Scope::Workspace(tenant), "live-ready", b"").await.map(drop).map_err(unavailable)
+}
+
 /// What the vault's copy of the relay's key is checked against the sealed field's with (an HMAC under each).
 const CHECK: &[u8] = b"ferrum-live: the relay's key";
 
@@ -154,7 +167,7 @@ async fn move_relay(k: &Kernel, v: &Vault, tenant: Uuid) -> Result<bool> {
             }
             Err(e) => return Err(e.into()),
         };
-        let Some(material) = k.secret(&mut tx, tenant, "LiveSettings", id, "signing_key").await?.map(Zeroizing::new) else {
+        let Some(material) = field(k, &mut tx, tenant, "LiveSettings", id, "signing_key").await? else {
             return Ok(v.describe(k, scope, RELAY).await.map_err(unavailable)?.is_some());
         };
         let same = match v.verify(k, scope, RELAY, CHECK, &mac(material.trim().as_bytes(), CHECK)).await {
