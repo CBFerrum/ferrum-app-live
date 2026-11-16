@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1
+
+Needs the same platform as 0.3.0. No database change. Interface only, `ui/dist` rebuilt with Ferrum-Frontend `06bd1a2`.
+
+- The `LivePlayer` component (`ui/src/embed/`), offered for other apps' pages, is gone: no app's interface used it. The
+  embed description (`GET /api/app/live/embed`, `GET …/broadcasts/{id}/embed`) and the frame origins stay; an app shows a
+  broadcast with the description's `iframe`.
+- The settings page no longer links to "the app's settings": that page only said it was not available. The relay
+  address for browsers is set where the server is run, as the sentence there says.
+- The two routes to the screens apps no longer have (`apps/:app/settings`, `x/:app/:page`) are gone. The page starts
+  through the frontend's `mountApp`; the interface lint has no baseline file any more.
+- The settings test reads Live Settings as it is since 0.3.0, without `signing_key`.
+
 ## 0.3.0
 
 Needs the same platform as 0.2.2. No interface change. The package's SQL reads as its final schema: `live_secret` and
