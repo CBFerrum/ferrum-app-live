@@ -1,6 +1,6 @@
 id: live
 name: Live
-version: 0.2.1
+version: 0.2.2
 publisher: cbferrum
 summary: "One-to-many live video at low delay through a Media over QUIC relay: broadcasts attached to any record, signed short-lived access, embeddable player, viewer counts"
 description: README.md
@@ -9,7 +9,7 @@ license: AGPL-3.0-only
 homepage: https://github.com/CBFerrum/ferrum-app-live
 support: https://github.com/CBFerrum/ferrum-app-live/issues
 runtime: native
-platform: ">=0.3.8, <0.4"
+platform: ">=0.3.9, <0.4"
 packages: [live]
 uninstall: ask
 # Its own interface at /live/ (Ferrum docs/plan/apps-ui.md): the broadcasts, a presenter's control page, the
