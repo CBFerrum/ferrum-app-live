@@ -240,21 +240,6 @@
   color: var(--warning);
 }
 
-.lv-embed {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  border-radius: var(--radius);
-  background: var(--surface-2);
-}
-
-.lv-embed-words {
-  padding: 16px;
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
 .num {
   text-align: end;
   font-variant-numeric: tabular-nums;

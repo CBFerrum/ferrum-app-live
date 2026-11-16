@@ -199,7 +199,7 @@ function Form({ row, defaults, writable }: { row: Settings; defaults: Record<str
           <input id="lv-relay" className="input" type="url" value={d.relay_url} disabled={!writable} onChange={(e) => set({ relay_url: e.target.value })} />
         </Field>
         <Alert tone="info">
-          {t("Screens inside Ferrum may connect only to the address named in this app’s own settings, under “Relay address for browsers”. Keep that the same address.")} <Link to="/apps/live/settings">{t("Open the app’s settings")}</Link>
+          {t("Screens inside Ferrum may connect only to the address named in this app’s own settings, under “Relay address for browsers”. Keep that the same address.")}
         </Alert>
         <Field label={t("Health address")} htmlFor="lv-check" error={err("relay_check_url")} hint={t("Where this server asks whether the relay answers. Empty: the relay address followed by /health.")}>
           <input id="lv-check" className="input" type="url" value={d.relay_check_url} disabled={!writable} onChange={(e) => set({ relay_check_url: e.target.value })} />

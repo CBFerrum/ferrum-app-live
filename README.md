@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.3.0-be123c?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.1-be123c?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -34,7 +34,7 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 - 🪜 **A simple audience ladder.** Members, Portal, Link or Public, each including the ones before it.
 - 🎟️ **Seats that count without names.** Capacity is enforced atomically, and viewers now and the peak come from keyed hashes, never names.
 - 🔑 **Short-lived access.** A token is for one broadcast path, with one right and an expiry, and is re-decided on every renewal.
-- 🧩 **Embeddable.** A player component and an embed description let other apps show a broadcast beside their own content, in a frame only the origins you name can use.
+- 🧩 **Embeddable.** An embed description lets other apps show a broadcast beside their own content, in a frame only the origins you name can use.
 - 🔓 **Open source, self-hosted.** AGPL, with your own relay and no per-viewer fee.
 
 ## 🎯 At a glance
@@ -148,7 +148,6 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 
 - **Embed description.** `GET /api/app/live/embed?entity=Lesson&record={id}` answers with the broadcasts about the record that the caller may watch (title, status, planned start, text, page and a ready `iframe`). One broadcast: `GET …/broadcasts/{id}/embed`, with `?link=` for a viewing link's secret. A person who may not watch a broadcast is not told it exists.
 - **Frame origins.** The only sites that may frame the watch page are the origins the broadcast names (one `https://host` per line, at most ten). The page answers with its own `Content-Security-Policy: frame-ancestors …`. Empty means none.
-- **`LivePlayer` component** (`ui/src/embed/`). Props for the record or one broadcast, a viewing link, `mode` (`frame` or `inline`), the picture's aspect ratio, a poll interval, and events `onStatus`, `onBroadcasts` and `onError`. It draws nothing when the person may watch nothing, shows the waiting, ended, cancelled and replay words, and never links or frames an address that is not `http(s)`. It is not yet published as a package: copy `ui/src/embed/`.
 - **Three cases.** A **live class** in the LMS (a lesson gets a broadcast with audience Members or Portal); **live shopping** in Commerce (a product gets a public broadcast, with the shop's origin in its frame origins); a **meeting with an audience** in Comms (a calendar event gets a broadcast; two-way talk stays in its LiveKit meeting).
 
 ### ⚙️ Settings
@@ -275,6 +274,7 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 ### ✅ Recently shipped
 
+- [x] **0.3.1** The `LivePlayer` component, which no app used, is gone; the embed description stays.
 - [x] **0.3.0** The relay's key lives in the vault alone, and seats are hashed with the vault's key alone: the keys kept before 0.2 are gone.
 - [x] **0.2.0** The relay's key has one home, the platform's vault; seats are hashed with a key from it.
 - [x] **0.2.2** Set Signing Key relies on the platform's vault to make Live's key in a workspace (platform 0.3.9).
@@ -306,7 +306,6 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 - [ ] A calendar of broadcasts and a replay list.
 - [ ] Choosing who may present from the interface (the records form does it today).
 - [ ] The relay's health on the settings page (it shows only what the settings say).
-- [ ] Publish `LivePlayer` as a package.
 - [ ] More than one relay, with clustering in front.
 - [ ] Languages: built-in translations (every word already goes through the translation function).
 - [ ] Mobile presenting.
@@ -353,7 +352,7 @@ CI runs formatting, clippy with warnings denied and the Rust tests against a Pos
 app.yaml          the manifest: id, version, relay setting, what it adds to Ferrum
 packages/live/    entities, roles, events, personal-data rules, SQL
 src/              access, broadcast, health, links, page, relay (the one interface to moq), reports, seats, settings, site, upkeep
-ui/               its own interface (React + Vite): home, new, control, watch, settings, and the embeddable LivePlayer in ui/src/embed
+ui/               its own interface (React + Vite): home, new, control, watch and settings
 tests/            live_it.rs: one scenario against PostgreSQL
 deploy/           Compose overlay, relay.toml and the Kubernetes manifest
 docs/             deploy.md (running the relay), moq.md (what Live was built against)
