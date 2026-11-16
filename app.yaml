@@ -1,6 +1,6 @@
 id: live
 name: Live
-version: 0.2.2
+version: 0.3.0
 publisher: cbferrum
 summary: "One-to-many live video at low delay through a Media over QUIC relay: broadcasts attached to any record, signed short-lived access, embeddable player, viewer counts"
 description: README.md

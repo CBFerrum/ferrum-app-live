@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0
+
+Needs the same platform as 0.2.2. No interface change. The package's SQL reads as its final schema: `live_secret` and
+`002_keys.sql` are gone, and Live Settings no longer has the sealed field `signing_key`. No installation was ever made
+from them, so a database is made afresh.
+
+**The relay's key has one home.** 0.2 kept Live Settings' sealed `signing_key` for the build before it: Set Signing Key
+wrote the field first, then the vault, and upkeep compared the two every minute under the settings' row lock (taken
+without waiting and retried) and took the field's when they differed. No build before 0.2 runs anywhere, so the field
+goes with that reconciliation: Set Signing Key writes the key's name in the settings and the key in the vault, and Live
+reads it from the vault alone.
+
+**Seats are hashed with the vault's key alone.** 0.2 moved the seats' key kept unsealed in `live_secret` into the vault
+as `old-seat-key`, for two hours, so that someone watching across the upgrade kept their seat. No one was watching, so
+the table, the move, its expiry, its upkeep step and the re-keying of a seat go.
+
+Tests: the end-to-end suite sets a second relay key (the vault holds it, the settings name it, tokens are signed with it)
+and makes a new version of Live's own key (the relay's key and its tokens stay as they were). The checks of the old seat
+key and of the sealed field went with them.
+
 ## 0.2.2
 
 Needs platform 0.3.9 (Ferrum `22d082f7` or later), whose vault never makes a workspace's keys inside a caller's

@@ -5,7 +5,6 @@
   fields:
     - {name: relay_url, type: url, label: Relay Address, description: "The relay as browsers reach it, for example https://live.example.com (HTTPS: WebTransport over QUIC on UDP, a WebSocket on TCP for browsers without it)"}
     - {name: relay_check_url, type: url, label: Relay Health Address, description: "Where this server asks whether the relay answers (the relay's /health); empty = the relay address with /health"}
-    - {name: signing_key, type: secret, read_only: true, hidden: true, description: "The relay's signing key (a JWK, HS256). Written by Set Signing Key, never shown"}
     - {name: signing_key_id, type: data, read_only: true, description: "Name (kid) of the key tokens are signed with; the relay's key directory holds a file of that name"}
     - {name: key_changed_at, type: datetime, read_only: true}
     - {name: path_prefix, type: data, default: live, max_length: 40, description: "The first part of every broadcast's path on the relay (letters, digits, dash, underscore)"}

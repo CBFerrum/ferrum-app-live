@@ -222,7 +222,7 @@ async fn scenario() {
         tx.commit().await.unwrap();
     }
 
-    // ───────────── settings: the key is checked, kept sealed and never shown ─────────────
+    // ───────────── settings: the key is checked, kept in the vault and never shown ─────────────
     let set = uid(&k
         .insert(&mira, "LiveSettings", obj(json!({"relay_url": "https://relay.example.com/", "replay_base_url": "https://replays.example.com"})))
         .await
@@ -232,7 +232,6 @@ async fn scenario() {
     k.run_action(&mira, "LiveSettings", set, "set_signing_key", json!({"key": "key-1"})).await.unwrap();
     let shown = k.get(&mira, "LiveSettings", set, false).await.unwrap();
     assert_eq!(shown["signing_key_id"], "key-1");
-    assert_ne!(shown["signing_key"], "key-1", "the key is not returned: {shown:?}");
     for bad in [
         json!({"path_prefix": "a/b"}),
         json!({"stream_name": "../x"}),
@@ -621,133 +620,21 @@ async fn scenario() {
     // ───────────── keys in the vault (src/keys.rs) ─────────────
     let scope = ferrum_kernel::vault::Scope::Workspace(acme.id);
     // The relay's key has one home: Live's secret in the vault, the key as it was given (what the relay's key directory
-    // holds). The sealed field the build before reads holds the same, for it.
+    // holds). Set Signing Key replaces it there.
     let held = live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().expect("the relay's key");
     assert!(held.rule.reveal && held.version == 1, "the relay holds the same secret: {held:?}");
     assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-1");
-    let field = |k: Arc<Kernel>| {
-        let v = live_vault.clone();
-        async move {
-            let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
-            let f = v.field(&k, &mut tx, acme.id, "LiveSettings", set, "signing_key").await.unwrap().map(|f| f.to_string());
-            tx.commit().await.unwrap();
-            f
-        }
-    };
-    assert_eq!(field(k.clone()).await.as_deref(), Some("key-1"));
-    // A workspace upgraded from 0.1: the key in the sealed field only. The first token moves it into the vault.
-    let as_before = |key: &str| {
-        let (k, mira, key) = (k.clone(), mira.clone(), key.to_string());
-        async move {
-            let values = json!({"signing_key": key, "signing_key_id": key, "key_changed_at": chrono::Utc::now().to_rfc3339()});
-            k.update(&ferrum_domain::util::elevated(&mira), "LiveSettings", set, obj(values), None).await.unwrap();
-        }
-    };
-    assert!(live_vault.remove(&k, scope, "relay-signing-key").await.unwrap());
-    as_before("key-0").await;
-    let moved = t.broadcast(&asha, json!({"title": "Moved", "audience": "Public"})).await;
-    let (_, started) = t.post(&acme, Some(&asha), moved, "publish", Value::Null).await.unwrap();
-    assert!(started["token"].as_str().unwrap().starts_with("fake.key-0."), "{started}");
-    assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-0", "moved into the vault");
-    // The build before sets another after a rollback: upkeep takes it, once, so the two never differ for long.
-    as_before("key-2").await;
-    ferrum_app_live::maintenance(&k).await.unwrap();
+    k.run_action(&mira, "LiveSettings", set, "set_signing_key", json!({"key": "key-2"})).await.unwrap();
+    assert_eq!(live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().map(|d| d.version), Some(2));
+    assert_eq!(k.get(&mira, "LiveSettings", set, false).await.unwrap()["signing_key_id"], "key-2");
+    // A new version of Live's own key leaves the relay's key as it was: tokens are signed with it as before.
+    assert_eq!(k.rotate_owner_key(scope, "live").await.expect("a new version"), 2);
+    let signed = t.broadcast(&asha, json!({"title": "Signed", "audience": "Public"})).await;
+    let (_, started) = t.post(&acme, Some(&asha), signed, "publish", Value::Null).await.unwrap();
+    assert!(started["token"].as_str().unwrap().starts_with("fake.key-2."), "{started}");
     assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-2");
-    ferrum_app_live::maintenance(&k).await.unwrap();
-    assert_eq!(live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().map(|d| d.version), Some(2), "once");
-    // This build's Set Signing Key writes both, so upkeep changes nothing.
-    k.run_action(&mira, "LiveSettings", set, "set_signing_key", json!({"key": "key-3"})).await.unwrap();
-    ferrum_app_live::maintenance(&k).await.unwrap();
-    assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-3");
-    assert_eq!(
-        (field(k.clone()).await.as_deref(), live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().map(|d| d.version)),
-        (Some("key-3"), Some(3))
-    );
-    // Seats: a viewer watching across the upgrade keeps the seat the old key gave them, once.
-    let old_key = [6u8; 32];
-    let old_seat = |broadcast: Uuid, n: u32| {
-        use hmac::Mac;
-        let who = nonce(n);
-        let mut m = hmac::Hmac::<sha2::Sha256>::new_from_slice(&old_key).unwrap();
-        for part in [broadcast.as_bytes().as_slice(), b"browser", who.as_bytes()] {
-            m.update(&(part.len() as u32).to_be_bytes());
-            m.update(part);
-        }
-        hex::encode(m.finalize().into_bytes())
-    };
-    {
-        let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
-        sqlx::query("insert into live_secret (tenant_id, secret) values ($1, $2)").bind(acme.id).bind(&old_key[..]).execute(&mut *tx).await.unwrap();
-        sqlx::query("insert into live_seat (tenant_id, broadcast, seat) values ($1, $2, $3)")
-            .bind(acme.id)
-            .bind(moved)
-            .bind(old_seat(moved, 950))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-    }
-    let (st, _) = t.post(&acme, None, moved, "watch/refresh", json!({"seat": nonce(950)})).await.unwrap();
-    assert_eq!(st, 200, "their seat is theirs still");
-    assert_eq!(t.scalar::<i64>(&acme, "select count(*) from live_seat where tenant_id = $1 and broadcast = $2", moved).await, 1, "and counts once");
-    let old = live_vault.describe(&k, scope, "old-seat-key").await.unwrap().expect("moved");
-    let retired = t
-        .scalar::<i64>(&acme, "select floor(extract(epoch from retired_at))::bigint from live_secret where tenant_id = $1 and $2::uuid is not null", moved)
-        .await;
-    assert_eq!((old.version, old.rule.reveal, old.rule.expires_at.unwrap().timestamp() - retired), (1, false, 7200), "for two hours");
-    // From now on nothing reads the unsealed table: seats are hashed and found without it.
-    let ddl = |q: &'static str| {
-        let k = k.clone();
-        async move {
-            let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
-            sqlx::raw_sql(q).execute(&mut *tx).await.unwrap();
-            tx.commit().await.unwrap();
-        }
-    };
-    ddl("alter table live_secret rename to live_secret_parked").await;
-    t.watch(&acme, None, moved, json!({"seat": nonce(951)})).await.unwrap();
-    assert_eq!(t.post(&acme, None, moved, "watch/refresh", json!({"seat": nonce(951)})).await.unwrap().0, 200);
-    assert_eq!(t.post(&acme, None, moved, "watch/refresh", json!({"seat": nonce(950)})).await.unwrap().0, 200, "the moved seat too");
-    ddl("alter table live_secret_parked rename to live_secret").await;
-    // Past its two hours the old key finds no seat.
-    assert!(live_vault.remove(&k, scope, "old-seat-key").await.unwrap());
-    t.sql(&acme, "update live_secret set retired_at = now() - interval '3 hours' where tenant_id = $1 and $2::uuid is not null", moved).await;
-    {
-        let mut tx = k.db.tenant_tx(acme.id).await.unwrap();
-        sqlx::query("insert into live_seat (tenant_id, broadcast, seat) values ($1, $2, $3)")
-            .bind(acme.id)
-            .bind(moved)
-            .bind(old_seat(moved, 952))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-    }
-    refused(t.post(&acme, None, moved, "watch/refresh", json!({"seat": nonce(952)})).await, "not found");
-    // A sandbox (a copy under another id, marked as the platform marks one) never takes the old key.
-    let copy = t.tenant("acme-try").await;
-    {
-        let mut tx = k.db.system_tx().await.unwrap();
-        for q in [
-            "alter table tenant disable trigger tenant_sandbox_kept",
-            "update tenant set sandbox_of = $1, sandbox_from = 'here', sandbox_until = current_date + 30 where id = $2",
-            "alter table tenant enable trigger tenant_sandbox_kept",
-            "insert into live_secret (tenant_id, secret) select $2, secret from live_secret where tenant_id = $1",
-        ] {
-            sqlx::query(q).bind(acme.id).bind(copy.id).execute(&mut *tx).await.unwrap();
-        }
-        tx.commit().await.unwrap();
-    }
-    ferrum_app_live::maintenance(&k).await.unwrap();
-    let copy_scope = ferrum_kernel::vault::Scope::Workspace(copy.id);
-    assert!(live_vault.describe(&k, copy_scope, "old-seat-key").await.unwrap().is_none(), "never in a sandbox");
-    assert_eq!(
-        t.scalar::<i64>(&copy, "select count(*) from live_secret where tenant_id = $1 and retired_at is not null and $2::uuid is not null", moved).await,
-        1
-    );
 
-    // Every secret field Live read it read with its own handle: none past the vault, which the platform notes
-    // (`ferrum task legacy_key`) in the background.
+    // No secret field was read past the vault, which the platform notes (`ferrum task legacy_key`) in the background.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let past: Vec<_> = k.legacy_key(vec![]).await.unwrap().uses.into_iter().filter(|u| u.0.starts_with("reader:")).map(|u| u.1).collect();
     assert!(past.is_empty(), "read past the vault: {past:?}");
@@ -759,8 +646,8 @@ async fn scenario() {
     let closed = Kernel::boot(db, catalog(), hooks, kernel_settings(), None).await.expect("it starts with the vault closed");
     let t = T { k: closed, relay: t.relay.clone() };
     for e in [
-        refused(t.watch(&acme, None, moved, json!({"seat": nonce(960)})).await, "unavailable"),
-        refused(t.post(&acme, Some(&asha), moved, "publish/refresh", Value::Null).await, "unavailable"),
+        refused(t.watch(&acme, None, signed, json!({"seat": nonce(960)})).await, "unavailable"),
+        refused(t.post(&acme, Some(&asha), signed, "publish/refresh", Value::Null).await, "unavailable"),
     ] {
         assert_eq!(e, "Live cannot give access right now: its keys are unavailable");
     }

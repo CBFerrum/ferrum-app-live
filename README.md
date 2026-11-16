@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.2.0-be123c?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.0-be123c?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -41,7 +41,7 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 
 | | |
 |---|---|
-| 📦 Version | `0.2.0` |
+| 📦 Version | `0.3.0` |
 | 🧱 Kind | Own interface at `/live/`, plus the app's own pages for people with no account |
 | 🗃️ What it adds | 4 entities in the `live` package: Broadcast, Presenter (child), Broadcast Link, Live Settings |
 | 👥 Roles | 2: Live User, Live Manager |
@@ -206,7 +206,7 @@ A broadcast's status moves only through the app. Ended keeps its counts and an o
 | Broadcast Link | A viewing or presenter link | Viewer / Presenter, expiry, used at, revoked at; only a hash of the secret is kept |
 | Live Settings | The relay, tokens, defaults, replay and wording | relay address, signing key's name (the key is in the vault), lifetimes, retention |
 
-Behind them, two tables hold seats (keyed hashes, no names) and the secret those hashes use, both with row-level security.
+Behind them, one table holds seats (keyed hashes under a key from the platform's vault, no names), with row-level security.
 
 ## 🔌 Integrations
 
@@ -275,6 +275,7 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 ### ✅ Recently shipped
 
+- [x] **0.3.0** The relay's key lives in the vault alone, and seats are hashed with the vault's key alone: the keys kept before 0.2 are gone.
 - [x] **0.2.0** The relay's key has one home, the platform's vault; seats are hashed with a key from it.
 - [x] **0.2.2** Set Signing Key relies on the platform's vault to make Live's key in a workspace (platform 0.3.9).
 - [x] **0.2.1** Live reads its sealed field with its own handle on the vault.

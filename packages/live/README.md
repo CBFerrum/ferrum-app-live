@@ -8,5 +8,5 @@ docs/moq.md and docs/deploy.md.
 Events the outbox raises, for automations and processes: `live.broadcast_started` and `live.broadcast_ended`
 (`{broadcast, title, status?, reference_entity, reference_id}`).
 
-Database: `live_seat` (seats: keyed hashes, no names) and `live_secret` (the key those hashes use), both with row-level security;
+Database: `live_seat` (seats: keyed hashes, no names, under a key from the vault), with row-level security;
 upkeep forgets seats a day old, ends broadcasts nobody presents and clears replay links past the retention days.

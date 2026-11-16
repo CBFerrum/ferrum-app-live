@@ -67,9 +67,8 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
     vec![Arc::new(reports::LiveReports)]
 }
 
-/// Periodic upkeep, every minute on one replica at a time: moves into the vault the keys kept outside it before 0.2
-/// (`keys.rs`), ends broadcasts nobody presents, forgets seats and clears replay links past their retention. Idempotent
-/// and cheap.
+/// Periodic upkeep, every minute on one replica at a time: ends broadcasts nobody presents, forgets seats and clears
+/// replay links past their retention. Idempotent and cheap.
 pub async fn maintenance(k: &Kernel) -> Result<()> {
     upkeep::run(k).await
 }
