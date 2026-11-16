@@ -136,13 +136,6 @@ pub(crate) async fn set_relay(k: &Kernel, tenant: Uuid, material: &str) -> Resul
     handle()?.set(k, Scope::Workspace(tenant), RELAY, value, rule).await.map_err(unavailable).map(|_| ())
 }
 
-/// Makes Live's own key in the workspace if it has none yet, in a transaction of its own; before Live writes its secret
-/// field in a transaction it then uses the vault beside (Set Signing Key), which would otherwise make the key in that
-/// transaction and wait on itself.
-pub(crate) async fn ready(k: &Kernel, tenant: Uuid) -> Result<()> {
-    handle()?.seal(k, Scope::Workspace(tenant), "live-ready", b"").await.map(drop).map_err(unavailable)
-}
-
 /// What the vault's copy of the relay's key is checked against the sealed field's with (an HMAC under each).
 const CHECK: &[u8] = b"ferrum-live: the relay's key";
 

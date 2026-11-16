@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2
+
+Needs platform 0.3.9 (Ferrum `22d082f7` or later), whose vault never makes a workspace's keys inside a caller's
+transaction. No database or interface change.
+
+- **Set Signing Key no longer makes Live's key in the workspace first, on a connection of its own.** 0.2.1 did so to keep
+  the action from waiting on itself; the platform now makes those keys on the vault's own connection wherever they are
+  first needed, so the step is gone.
+
 ## 0.2.1
 
 Needs a platform with the vault's field reader (0.3.8 on the platform's main from cdec881). No database or interface change.

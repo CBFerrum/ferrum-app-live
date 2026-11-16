@@ -170,9 +170,6 @@ impl DocHook for SettingsHook {
         // takes the field's when they differ (keys.rs), so a failed action leaves the key that was.
         let values = json!({"signing_key": material.trim(), "signing_key_id": key.kid, "key_changed_at": crate::ts(changed_at)});
         let values = values.as_object().cloned().unwrap_or_default();
-        // Live's key in the workspace is made first, on a connection of its own: the field's write would make it inside
-        // this transaction, and the vault's write below, on another connection, would wait on that until it timed out.
-        crate::keys::ready(hc.kernel, hc.ctx.tenant).await?;
         hc.kernel.update_tx(&crate::elevated(hc.ctx), hc.tx, "LiveSettings", doc_id(doc)?, values, None).await?;
         crate::keys::set_relay(hc.kernel, hc.ctx.tenant, material.trim()).await?;
         Ok(Some(json!({"key_id": key.kid})))

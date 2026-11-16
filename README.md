@@ -276,6 +276,7 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 ### ✅ Recently shipped
 
 - [x] **0.2.0** The relay's key has one home, the platform's vault; seats are hashed with a key from it.
+- [x] **0.2.2** Set Signing Key relies on the platform's vault to make Live's key in a workspace (platform 0.3.9).
 - [x] **0.2.1** Live reads its sealed field with its own handle on the vault.
 - [x] **0.1.1** An interface of its own at `/live/`: broadcasts, planning, a presenter's control page, the watch page, settings and the `LivePlayer` component; the moq components bundled, so no page loads a third-party script.
 - [x] **0.1.0** The first release: broadcasts about any record or alone, short-lived signed access, atomic seats, the audience ladder, viewing and presenter links, an embed description, counts, reports, replay links with retention, deploy files and a health check.
