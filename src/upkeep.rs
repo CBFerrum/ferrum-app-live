@@ -9,9 +9,6 @@ use serde_json::json;
 use uuid::Uuid;
 
 pub async fn run(k: &Kernel) -> Result<()> {
-    if let Err(e) = crate::keys::move_waiting(k).await {
-        tracing::warn!("live maintenance: moving keys into the vault: {e}");
-    }
     let mut tx = k.db.system_tx().await?;
     let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
     tx.commit().await?;

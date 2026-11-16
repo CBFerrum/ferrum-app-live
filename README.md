@@ -206,7 +206,7 @@ A broadcast's status moves only through the app. Ended keeps its counts and an o
 | Broadcast Link | A viewing or presenter link | Viewer / Presenter, expiry, used at, revoked at; only a hash of the secret is kept |
 | Live Settings | The relay, tokens, defaults, replay and wording | relay address, signing key's name (the key is in the vault), lifetimes, retention |
 
-Behind them, two tables hold seats (keyed hashes, no names) and the secret those hashes use, both with row-level security.
+Behind them, one table holds seats (keyed hashes under a key from the platform's vault, no names), with row-level security.
 
 ## 🔌 Integrations
 

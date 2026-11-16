@@ -31,8 +31,7 @@ relay's public name, and `keys/<kid>.jwk`.
    Ferrum share the secret. Paste the file's text into **Set Signing Key**.
 2. **Live Settings** (in the app): *Relay Address* `https://live.example.com`, *Relay Health Address*
    `http://live-relay:8080/health` (as the server reaches it), then **Set Signing Key** with the same key text. The
-   app keeps it in the platform's vault, its one home (and, for the build before 0.2, in Live Settings' sealed field,
-   kept equal to it), and never shows it again; it shows only the key's name. The
+   app keeps it in the platform's vault, its one home, and never shows it again; it shows only the key's name. The
    file in `keys/` is the same text: until the platform writes companion programs' files from the vault at their start
    (`ferrum render`, to come: it will write `{kid}.jwk` from Live's secret `relay-signing-key`, byte for byte), you
    copy it there yourself. A key with the name of the one in use and another secret is refused: the relay holds one

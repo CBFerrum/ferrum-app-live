@@ -135,10 +135,9 @@ impl DocHook for SettingsHook {
         Ok(())
     }
 
-    /// `set_signing_key {key}`: checks the key and keeps it in the vault, its one home (and, for the build before this
-    /// one, in the sealed field), with its name; the key is never shown again. A key under the name of the one in use but
-    /// with another secret is refused: the relay holds one file a name, and the two would differ without anyone seeing it
-    /// until people cannot watch.
+    /// `set_signing_key {key}`: checks the key and keeps it in the vault, its one home, with its name in the settings; the
+    /// key is never shown again. A key under the name of the one in use but with another secret is refused: the relay holds
+    /// one file a name, and the two would differ without anyone seeing it until people cannot watch.
     async fn action(&self, hc: &mut HookCtx<'_>, name: &str, doc: &Doc, params: &Value) -> Result<Option<Value>> {
         if name != "set_signing_key" {
             return Ok(None);
@@ -146,14 +145,9 @@ impl DocHook for SettingsHook {
         let material = params.get("key").and_then(Value::as_str).unwrap_or_default();
         let key = self.relay.parse_key(material)?;
         let changed_at = crate::now();
-        // The key in use: the vault's, else the one the sealed field still holds from before. (In the action's
-        // transaction, which holds the settings' row: the vault answers on a second connection.)
-        let current = match crate::keys::held_relay_key(hc.kernel, hc.ctx.tenant).await? {
-            Some(key) => Some(String::from_utf8_lossy(&key).into_owned()),
-            None => crate::keys::field(hc.kernel, hc.tx, hc.ctx.tenant, "LiveSettings", doc_id(doc)?, "signing_key").await?.map(|f| f.to_string()),
-        };
-        if let Some(current) = current
-            && let Ok(current) = self.relay.parse_key(&current)
+        // The key in use, from the vault (which answers on a connection of its own, beside the action's transaction).
+        if let Some(current) = crate::keys::relay_key(hc.kernel, hc.ctx.tenant).await?
+            && let Ok(current) = self.relay.parse_key(&String::from_utf8_lossy(&current))
             && current.kid == key.kid
             && !current.same_secret(&key)
         {
@@ -165,10 +159,9 @@ impl DocHook for SettingsHook {
                 ),
             ));
         }
-        // The sealed field first, for the build before this one, which reads it (this update holds the settings' row
-        // until the action commits), then the vault, the key's home: upkeep compares the two under that row's lock and
-        // takes the field's when they differ (keys.rs), so a failed action leaves the key that was.
-        let values = json!({"signing_key": material.trim(), "signing_key_id": key.kid, "key_changed_at": crate::ts(changed_at)});
+        // Its name in the settings (this update holds the settings' row until the action commits), then the key in the
+        // vault: a failed write there fails the action, which leaves the settings as they were.
+        let values = json!({"signing_key_id": key.kid, "key_changed_at": crate::ts(changed_at)});
         let values = values.as_object().cloned().unwrap_or_default();
         hc.kernel.update_tx(&crate::elevated(hc.ctx), hc.tx, "LiveSettings", doc_id(doc)?, values, None).await?;
         crate::keys::set_relay(hc.kernel, hc.ctx.tenant, material.trim()).await?;

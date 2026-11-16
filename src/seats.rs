@@ -36,23 +36,6 @@ pub fn key(seats: &[u8], message: &[u8]) -> String {
     hex::encode(crate::keys::mac(seats, message))
 }
 
-/// A viewer's seat taken before 0.2 (`old`, the old key's hash), moved to the one they have now (`seat`), when it is
-/// still live: they keep it, and it counts once.
-pub async fn rekey(tx: &mut Tx, tenant: Uuid, broadcast: Uuid, old: &str, seat: &str, window: i64) -> Result<bool> {
-    let n = sqlx::query(
-        "with old as (delete from live_seat where tenant_id = $1 and broadcast = $2 and seat = $3            and seen_at > now() - make_interval(secs => $5::float8) returning taken_at)          insert into live_seat (tenant_id, broadcast, seat, taken_at, seen_at) select $1, $2, $4, taken_at, now() from old          on conflict (tenant_id, broadcast, seat) do update set seen_at = now()",
-    )
-    .bind(tenant)
-    .bind(broadcast)
-    .bind(old)
-    .bind(seat)
-    .bind(window as f64)
-    .execute(&mut **tx)
-    .await?
-    .rows_affected();
-    Ok(n == 1)
-}
-
 /// Seats live within `window` seconds.
 pub async fn live(tx: &mut Tx, tenant: Uuid, broadcast: Uuid, window: i64) -> Result<i64> {
     Ok(sqlx::query_scalar("select count(*) from live_seat where tenant_id = $1 and broadcast = $2 and seen_at > now() - make_interval(secs => $3::float8)")

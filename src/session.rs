@@ -122,15 +122,9 @@ pub async fn watch(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &
         }
         return Ok(Outcome::State(state(&set, &doc)));
     }
-    let message = seats::message(id, seat_kind(&viewer), &ident);
-    let seat = seats::key(seat_key.bytes(), &message);
+    let seat = seats::key(seat_key.bytes(), &seats::message(id, seat_kind(&viewer), &ident));
     let win = window(&set);
-    let mut kept = seats::renew(&mut tx, tenant, id, &seat, win).await?;
-    // Someone watching across the upgrade keeps the seat the old key gave them (keys.rs).
-    if !kept && let Some(old) = keys::old_hash(k, tenant, &message).await? {
-        kept = seats::rekey(&mut tx, tenant, id, &hex::encode(old), &seat, win).await?;
-    }
-    if kept {
+    if seats::renew(&mut tx, tenant, id, &seat, win).await? {
         let out = offer(relay, &set, tenant, id, Access::Watch, relay_key.as_deref().map(|k| k.as_slice()))?;
         tx.commit().await?;
         return Ok(Outcome::Offer(out));
