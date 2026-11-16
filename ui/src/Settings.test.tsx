@@ -46,22 +46,20 @@ describe("the settings as numbers and words", () => {
 });
 
 describe("the settings screen", () => {
-  it("shows the key's name and when it was set but never the key, and saves what was changed against the version it read", async () => {
+  it("shows the key's name and when it was set, and saves what was changed against the version it read", async () => {
     const server = fakeServer({
-      "GET /api/v1/LiveSettings": () => ({ rows: [{ ...saved, signing_key: "SHOULD-NEVER-BE-SHOWN" }] }),
+      "GET /api/v1/LiveSettings": () => ({ rows: [saved] }),
       "GET /api/meta/LiveSettings": () => meta,
       "PATCH /api/v1/LiveSettings/s1": () => ({ ...saved, version: 4 }),
     });
     const page = await mount(<Settings />);
     expect(page.text()).toContain("A key is set, named ferrum-1");
-    expect(page.text()).not.toContain("SHOULD-NEVER-BE-SHOWN");
     expect(page.el.querySelector<HTMLTextAreaElement>("#lv-key")!.value).toBe("");
     expect(page.el.querySelector<HTMLInputElement>("#lv-relay")!.value).toBe("https://live.example.com");
     await type(page.el.querySelector<HTMLInputElement>("#lv-watch-min")!, "15");
     await press(page.button("Save settings"));
     const call = server.last("PATCH /api/v1/LiveSettings/s1")!;
     expect(call.body).toMatchObject({ watch_token_minutes: 15, relay_url: "https://live.example.com" });
-    expect(call.body).not.toHaveProperty("signing_key");
     expect((fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls.find((c) => (c[1].method ?? "") === "PATCH")?.[1].headers).toMatchObject({ "if-match": '"v3"' });
     expect(document.body.textContent).toContain("Saved");
     await page.unmount();

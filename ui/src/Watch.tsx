@@ -50,7 +50,7 @@ export function Watch({ id }: { id: string }) {
   );
 }
 
-/** The player and its states for one broadcast. Also what the embeddable component draws when it is asked to play inline. */
+/** The player and its states for one broadcast. */
 export function Viewer({ id }: { id: string }) {
   const { session, state } = useSession("watch", id, true);
   const [el, setEl] = useState<HTMLElement | null>(null);
