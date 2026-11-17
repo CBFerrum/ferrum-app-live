@@ -14,7 +14,7 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-data-336791?style=flat-square&logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/React-TypeScript-0ea5e9?style=flat-square&logo=react&logoColor=white)
 ![Media over QUIC](https://img.shields.io/badge/Media%20over%20QUIC-moq--relay%200.17.16-be123c?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-5%20Rust%20%2B%20~90%20UI-16a34a?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-6%20Rust%20%2B%2081%20UI-16a34a?style=flat-square)
 
 ### Put one presenter in front of a large audience at low delay, about any record, with seats, links and replays you control.
 
@@ -41,18 +41,18 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 
 | | |
 |---|---|
-| 📦 Version | `0.3.0` |
+| 📦 Version | `0.3.1` |
 | 🧱 Kind | Own interface at `/live/`, plus the app's own pages for people with no account |
 | 🗃️ What it adds | 4 entities in the `live` package: Broadcast, Presenter (child), Broadcast Link, Live Settings |
 | 👥 Roles | 2: Live User, Live Manager |
 | 📊 Reports | 2: Broadcasts and Their Audience, Audience by Status |
 | 📣 Events | 2: Broadcast started, Broadcast ended |
 | ⏱️ Upkeep | every minute: ends broadcasts nobody presents, forgets old seats, clears replay links past retention |
-| 🔗 Depends on | Ferrum `>=0.3.2, <0.4`; a relay you run (docs/deploy.md) |
+| 🔗 Depends on | Ferrum `>=0.3.9, <0.4`; a relay you run (docs/deploy.md) |
 | 🤝 Works with | LMS, Commerce, Comms (calendar events), and any app with records, through the embed |
 | 🧱 Built against | `moq-relay` 0.17.16, `@moq/watch` 0.6.6 and `@moq/publish` 0.5.6 |
 | 🌍 Languages | English only so far; every word goes through the translation function, and a workspace can translate them |
-| 🧪 Tests | 5 Rust tests (one scenario against PostgreSQL), about 90 interface tests against faked routes and elements |
+| 🧪 Tests | 6 Rust tests (one scenario against PostgreSQL, with a fake behind the relay interface), 81 interface tests against faked routes and elements |
 | 📄 Licence | AGPL-3.0-only |
 
 ## 📸 Screenshots
@@ -98,7 +98,7 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 
 ### 📡 Broadcasts
 
-- **Broadcast.** A title, description, planned start and end, optionally the record it is about (`reference_entity` and `reference_id`), an audience, a capacity, a waiting text, the people and role who may present, whether it is recorded, and the sites that may frame its page.
+- **Broadcast.** A title, description, planned start and end, optionally the record it is about (`reference_entity` and `reference_id`), an audience, a capacity, a waiting text, the people and role who may present, whether a recorder beside the relay is to record it (Live itself does not record), and the sites that may frame its page.
 - **Status that only the app moves.** Scheduled until a presenter starts; Live until a presenter or a manager ends it (or until nobody has renewed the presenter's token for its life and a minute, and upkeep ends it); then Ended. Cancelled is possible from Scheduled.
 - **Actions.** End Broadcast (with a confirmation), Cancel Broadcast, Make a Viewing Link, Make a Presenter Link and Revoke All Links.
 - **Results kept.** Who started it, when it started and ended, viewers peak and total, the replay address, and when the replay was cleared.
@@ -274,12 +274,12 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 ### ✅ Recently shipped
 
-- [x] **0.3.1** The `LivePlayer` component, which no app used, is gone; the embed description stays.
-- [x] **0.3.0** The relay's key lives in the vault alone, and seats are hashed with the vault's key alone: the keys kept before 0.2 are gone.
-- [x] **0.2.0** The relay's key has one home, the platform's vault; seats are hashed with a key from it.
+- [x] **0.3.1** The `LivePlayer` component, which no app used, is not offered; the embed description is.
+- [x] **0.3.0** The relay's key lives in the vault alone, and seats are hashed with the vault's key alone.
 - [x] **0.2.2** Set Signing Key relies on the platform's vault to make Live's key in a workspace (platform 0.3.9).
-- [x] **0.2.1** Live reads its sealed field with its own handle on the vault.
-- [x] **0.1.1** An interface of its own at `/live/`: broadcasts, planning, a presenter's control page, the watch page, settings and the `LivePlayer` component; the moq components bundled, so no page loads a third-party script.
+- [x] **0.2.1** Live reads its signing key with its own handle on the vault.
+- [x] **0.2.0** The relay's key has one home, the platform's vault; seats are hashed with a key from it.
+- [x] **0.1.1** An interface of its own at `/live/`: broadcasts, planning, a presenter's control page, the watch page and settings; the moq components bundled, so no page loads a third-party script.
 - [x] **0.1.0** The first release: broadcasts about any record or alone, short-lived signed access, atomic seats, the audience ladder, viewing and presenter links, an embed description, counts, reports, replay links with retention, deploy files and a health check.
 
 ### 🔜 Next up
@@ -353,7 +353,7 @@ app.yaml          the manifest: id, version, relay setting, what it adds to Ferr
 packages/live/    entities, roles, events, personal-data rules, SQL
 src/              access, broadcast, health, links, page, relay (the one interface to moq), reports, seats, settings, site, upkeep
 ui/               its own interface (React + Vite): home, new, control, watch and settings
-tests/            live_it.rs: one scenario against PostgreSQL
+tests/            live_it.rs: one scenario against PostgreSQL, with a fake behind the relay interface
 deploy/           Compose overlay, relay.toml and the Kubernetes manifest
 docs/             deploy.md (running the relay), moq.md (what Live was built against)
 ```

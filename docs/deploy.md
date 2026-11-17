@@ -32,9 +32,8 @@ relay's public name, and `keys/<kid>.jwk`.
 2. **Live Settings** (in the app): *Relay Address* `https://live.example.com`, *Relay Health Address*
    `http://live-relay:8080/health` (as the server reaches it), then **Set Signing Key** with the same key text. The
    app keeps it in the platform's vault, its one home, and never shows it again; it shows only the key's name. The
-   file in `keys/` is the same text: until the platform writes companion programs' files from the vault at their start
-   (`ferrum render`, to come: it will write `{kid}.jwk` from Live's secret `relay-signing-key`, byte for byte), you
-   copy it there yourself. A key with the name of the one in use and another secret is refused: the relay holds one
+   file in `keys/` is the same text, which you copy there yourself: Live declares no service for the platform's
+   `ferrum task render` to write `{kid}.jwk` from Live's secret `relay-signing-key`. A key with the name of the one in use and another secret is refused: the relay holds one
    file a name. Then set the same address in the app's own
    settings (*Relay address for browsers*): the interface inside Ferrum may open its connection to the relay only
    at the address that setting names (the manifest's `ui.csp.connect`).
