@@ -1,38 +1,24 @@
-//! Upkeep, every minute: ends broadcasts nobody presents (a presenter's token has run out and nobody renewed it,
+//! Upkeep of one workspace, about once a minute: ends broadcasts nobody presents (a presenter's token has run out and nobody renewed it,
 //! so the relay has already cut the stream), forgets seats nobody renews, and clears the replay link and the links of
 //! broadcasts that ended more than the retention days ago. Each broadcast is handled under its row lock in a transaction of its
 //! own, so what happens, happens once however often this runs.
 
-use crate::{PACKAGE, broadcast, doc_id, s, settings, ts};
+use crate::{broadcast, doc_id, s, settings, ts};
 use ferrum_kernel::{Ctx, Kernel, Result};
 use serde_json::json;
 use uuid::Uuid;
 
-pub async fn run(k: &Kernel) -> Result<()> {
-    let mut tx = k.db.system_tx().await?;
-    let tenants: Vec<Uuid> = sqlx::query_scalar("select id from tenant where status = 'active' order by id").fetch_all(&mut *tx).await?;
-    tx.commit().await?;
+/// One workspace's round.
+pub async fn run(k: &Kernel, tenant: Uuid) -> Result<()> {
+    let ctx = Ctx::system(tenant, k.registry.schema(tenant).await?);
     let mut first_error = None;
-    for tenant in tenants {
-        let schema = match k.registry.schema(tenant).await {
-            Ok(s) => s,
+    for (step, outcome) in [("silent", end_silent(k, &ctx).await), ("seats", forget_seats(k, &ctx).await), ("retention", retain(k, &ctx).await)] {
+        match outcome {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(%tenant, step, n, "live maintenance"),
             Err(e) => {
+                tracing::warn!(%tenant, step, "live maintenance failed: {e}");
                 first_error.get_or_insert(e);
-                continue;
-            }
-        };
-        if !schema.packages.iter().any(|p| p == PACKAGE) {
-            continue;
-        }
-        let ctx = Ctx::system(tenant, schema);
-        for (step, outcome) in [("silent", end_silent(k, &ctx).await), ("seats", forget_seats(k, &ctx).await), ("retention", retain(k, &ctx).await)] {
-            match outcome {
-                Ok(0) => {}
-                Ok(n) => tracing::info!(%tenant, step, n, "live maintenance"),
-                Err(e) => {
-                    tracing::warn!(%tenant, step, "live maintenance failed: {e}");
-                    first_error.get_or_insert(e);
-                }
             }
         }
     }

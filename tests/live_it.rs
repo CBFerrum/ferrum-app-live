@@ -566,11 +566,11 @@ async fn scenario() {
     let quiet = t.broadcast(&asha, json!({"title": "Quiet", "audience": "Public"})).await;
     t.post(&acme, Some(&asha), quiet, "publish", Value::Null).await.unwrap();
     t.watch(&acme, None, quiet, json!({"seat": nonce(700)})).await.unwrap();
-    ferrum_app_live::maintenance(&k).await.unwrap();
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
     assert_eq!(t.get(&asha, quiet).await["status"], "Live", "a presenter whose token is still good keeps it");
     t.sql(&acme, "update e_broadcast set last_publish_at = now() - interval '3 hours' where tenant_id = $1 and id = $2", quiet).await;
-    ferrum_app_live::maintenance(&k).await.unwrap();
-    ferrum_app_live::maintenance(&k).await.unwrap();
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
     let q = t.get(&asha, quiet).await;
     assert_eq!(q["status"], "Ended");
     assert!(q["ended_at"].is_string());
@@ -579,7 +579,7 @@ async fn scenario() {
     k.update(&asha, "Broadcast", guest, obj(json!({"replay_url": "https://replays.example.com/old.m3u8"})), None).await.unwrap();
     t.sql(&acme, "update e_broadcast set ended_at = now() - interval '40 days' where tenant_id = $1 and id = $2", guest).await;
     assert!(t.scalar::<i64>(&acme, "select count(*) from e_broadcast_link where tenant_id = $1 and broadcast = $2", guest).await > 0);
-    ferrum_app_live::maintenance(&k).await.unwrap();
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
     let g = t.get(&asha, guest).await;
     assert_eq!(g["replay_url"], Value::Null);
     assert!(g["replay_cleared_at"].is_string());

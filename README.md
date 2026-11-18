@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.3.1-be123c?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-be123c?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -41,14 +41,14 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 
 | | |
 |---|---|
-| 📦 Version | `0.3.1` |
+| 📦 Version | `0.4.0` |
 | 🧱 Kind | Own interface at `/live/`, plus the app's own pages for people with no account |
 | 🗃️ What it adds | 4 entities in the `live` package: Broadcast, Presenter (child), Broadcast Link, Live Settings |
 | 👥 Roles | 2: Live User, Live Manager |
 | 📊 Reports | 2: Broadcasts and Their Audience, Audience by Status |
 | 📣 Events | 2: Broadcast started, Broadcast ended |
 | ⏱️ Upkeep | every minute: ends broadcasts nobody presents, forgets old seats, clears replay links past retention |
-| 🔗 Depends on | Ferrum `>=0.3.9, <0.4`; a relay you run (docs/deploy.md) |
+| 🔗 Depends on | Ferrum `>=0.4.0, <0.5`; a relay you run (docs/deploy.md) |
 | 🤝 Works with | LMS, Commerce, Comms (calendar events), and any app with records, through the embed |
 | 🧱 Built against | `moq-relay` 0.17.16, `@moq/watch` 0.6.6 and `@moq/publish` 0.5.6 |
 | 🌍 Languages | English only so far; every word goes through the translation function, and a workspace can translate them |
@@ -274,6 +274,7 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 ### ✅ Recently shipped
 
+- [x] **0.4.0** Upkeep runs one workspace at a time, on whichever replica is free; needs Ferrum 0.4.0.
 - [x] **0.3.1** The `LivePlayer` component, which no app used, is not offered; the embed description is.
 - [x] **0.3.0** The relay's key lives in the vault alone, and seats are hashed with the vault's key alone.
 - [x] **0.2.2** Set Signing Key relies on the platform's vault to make Live's key in a workspace (platform 0.3.9).
