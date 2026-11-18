@@ -67,10 +67,10 @@ pub fn reports() -> Vec<Arc<dyn ReportSource>> {
     vec![Arc::new(reports::LiveReports)]
 }
 
-/// Periodic upkeep, every minute on one replica at a time: ends broadcasts nobody presents, forgets seats and clears
-/// replay links past their retention. Idempotent and cheap.
-pub async fn maintenance(k: &Kernel) -> Result<()> {
-    upkeep::run(k).await
+/// One workspace's upkeep, which the platform runs about once a minute where Live is installed, on whichever replica is
+/// free, and may run again: ends broadcasts nobody presents, forgets seats and clears replay links past their retention.
+pub async fn maintenance(k: &Kernel, tenant: Uuid) -> Result<()> {
+    upkeep::run(k, tenant).await
 }
 
 // ───────────────────────────── shared helpers ─────────────────────────────
