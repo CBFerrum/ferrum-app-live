@@ -289,6 +289,18 @@ async fn scenario() {
     };
     assert_eq!(kept, (json!("Scheduled"), json!(0)));
     assert_eq!(t.get(&asha, early).await["status"], "Scheduled");
+    // Viewer counts are derived from seats, never typed: not by a manager either, nor through the gate an agent uses.
+    let typed = json!({"viewers_peak": 50, "viewers_total": 70, "started_at": "2030-01-01T00:00:00Z", "presenter_name": "Someone"});
+    let _ = k.update(&mira, "Broadcast", early, obj(typed.clone()), None).await;
+    let through_gate =
+        k.invoke(&mira, ferrum_kernel::capability::Invocation::new("live.broadcast.update", json!({"id": early, "values": typed})).key("typed-counts-1")).await;
+    assert!(!matches!(through_gate, Err(Error::NotFound(_))), "the gate knows the operation: {through_gate:?}");
+    let b = t.get(&mira, early).await;
+    assert_eq!(
+        (b["viewers_peak"].clone(), b["viewers_total"].clone(), b["started_at"].clone(), b["presenter_name"].clone()),
+        (json!(0), json!(0), Value::Null, Value::Null),
+        "{b:?}"
+    );
 
     // ───────────── presenting ─────────────
     let live = t.broadcast(&asha, json!({"title": "Webinar", "audience": "Public", "capacity": 2, "waiting_text": "Starting at ten"})).await;
