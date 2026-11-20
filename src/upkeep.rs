@@ -104,7 +104,9 @@ async fn retain(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     let days = settings::load(k, ctx, &mut tx).await?.number("retention_days").max(1);
     let old: Vec<Uuid> = sqlx::query_scalar(
         "select id from e_broadcast where tenant_id = $1 and status in ('Ended', 'Cancelled') and ended_at < now() - make_interval(days => $2::int) \
-         and (replay_url is not null or exists (select 1 from e_broadcast_link l where l.tenant_id = e_broadcast.tenant_id and l.broadcast = e_broadcast.id)) limit 100",
+         and (replay_url is not null or exists (select 1 from e_broadcast_link l where l.tenant_id = e_broadcast.tenant_id and l.broadcast = e_broadcast.id) \
+         or exists (select 1 from e_broadcast_question q where q.tenant_id = e_broadcast.tenant_id and q.broadcast = e_broadcast.id) \
+         or exists (select 1 from e_broadcast_poll p where p.tenant_id = e_broadcast.tenant_id and p.broadcast = e_broadcast.id)) limit 100",
     )
     .bind(ctx.tenant)
     .bind(days as i32)
@@ -113,7 +115,14 @@ async fn retain(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     let mut n = 0;
     for id in old {
         let doc = k.get_tx(ctx, &mut tx, "Broadcast", id, true).await?;
-        sqlx::query("delete from e_broadcast_link where tenant_id = $1 and broadcast = $2").bind(ctx.tenant).bind(id).execute(&mut *tx).await?;
+        // Its links, and what viewers wrote and voted (a poll's votes go with it).
+        for table in ["e_broadcast_link", "e_broadcast_question", "e_broadcast_poll"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!("delete from {table} where tenant_id = $1 and broadcast = $2")))
+                .bind(ctx.tenant)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
         if s(&doc, "replay_url").is_some() {
             let patch = json!({"replay_url": null, "replay_cleared_at": ts(crate::now())});
             k.update_tx(ctx, &mut tx, "Broadcast", doc_id(&doc)?, patch.as_object().cloned().unwrap_or_default(), None).await?;

@@ -621,6 +621,7 @@ async fn scenario() {
 
     // ───────────── a presenter's name is personal data, found by address and erased ─────────────
     assert_eq!(g["presenter_email"], "pat@outside.test");
+    k.update(&asha, "Broadcast", guest, obj(json!({"replay_url": "https://replays.example.com/again.m3u8"})), None).await.unwrap();
     k.erase_personal_data(&acme.admin, "pat@outside.test", "asked to").await.unwrap();
     let g = t.get(&asha, guest).await;
     assert_eq!((g["presenter_name"].clone(), g["presenter_email"].clone()), (Value::Null, Value::Null), "{g:?}");
@@ -728,6 +729,63 @@ async fn scenario() {
     expect(&mut wrong, "the broadcast ended: its viewers stop", no(&t.auth(&acme, ask("revalidate", &by_mira)).await));
     expect(&mut wrong, "the broadcast ended: nothing connects", no(&t.auth(&acme, ask("connect", &by_mira)).await));
     assert!(wrong.is_empty(), "rules that do not hold: {wrong:#?}");
+
+    // ───────────── questions and polls: by the seat a viewer watches from ─────────────
+    let qa = t.broadcast(&asha, json!({"title": "Ask me", "audience": "Public"})).await;
+    let qpost = |route: &'static str, body: Value| t.post(&acme, None, qa, route, body);
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "Too early?"})).await, "conflict");
+    t.post(&acme, Some(&asha), qa, "publish", Value::Null).await.unwrap();
+    t.watch(&acme, None, qa, json!({"seat": nonce(820)})).await.unwrap();
+    t.watch(&acme, None, qa, json!({"seat": nonce(821)})).await.unwrap();
+    refused(qpost("ask", json!({"seat": nonce(829), "text": "No seat?"})).await, "forbidden");
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "  "})).await, "invalid");
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "x".repeat(501)})).await, "invalid");
+    let (_, asked) = qpost("ask", json!({"seat": nonce(820), "text": "When is the next one?", "name": "Lee"})).await.unwrap();
+    assert_eq!(asked["status"], "Waiting");
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "And again?"})).await, "conflict");
+    let (_, other_q) = qpost("ask", json!({"seat": nonce(821), "text": "Is it recorded?"})).await.unwrap();
+    let (_, feed) = qpost("feed", json!({"seat": nonce(821)})).await.unwrap();
+    assert_eq!((feed["questions"].clone(), feed["poll"].clone()), (json!([]), Value::Null), "waiting questions reach nobody");
+    // The presenter's side: the broadcast's actions; someone who may not change the broadcast cannot.
+    let listed = k.run_action(&asha, "Broadcast", qa, "questions", Value::Null).await.unwrap();
+    assert_eq!(listed["questions"].as_array().unwrap().len(), 2);
+    assert!(k.run_action(&ravi, "Broadcast", qa, "moderate_question", json!({"question": asked["question"], "to": "Shown"})).await.is_err());
+    k.run_action(&asha, "Broadcast", qa, "moderate_question", json!({"question": asked["question"], "to": "Shown"})).await.unwrap();
+    k.run_action(&asha, "Broadcast", qa, "moderate_question", json!({"question": other_q["question"], "to": "Hidden"})).await.unwrap();
+    refused(k.run_action(&asha, "Broadcast", qa, "moderate_question", json!({"question": other_q["question"], "to": "Shown"})).await, "invalid");
+    let elsewhere = k.run_action(&asha, "Broadcast", passes, "moderate_question", json!({"question": asked["question"], "to": "Answered"})).await;
+    assert!(elsewhere.is_err(), "a question is moderated on its own broadcast only");
+    let (_, feed) = qpost("feed", json!({"seat": nonce(820)})).await.unwrap();
+    assert_eq!(feed["questions"], json!([{"id": asked["question"], "text": "When is the next one?", "name": "Lee", "status": "Shown"}]));
+    // A poll: each seat votes once; a second vote changes nothing; a closed poll takes none.
+    refused(k.run_action(&asha, "Broadcast", qa, "open_poll", json!({"question": "Which?", "options": "Only one"})).await, "invalid");
+    let poll = k.run_action(&asha, "Broadcast", qa, "open_poll", json!({"question": "Which day?", "options": "Monday\nFriday\n"})).await.unwrap();
+    let pid = poll["poll"].clone();
+    assert_eq!(qpost("vote", json!({"seat": nonce(820), "poll": pid, "option": 1})).await.unwrap().1["counted"], true);
+    assert_eq!(qpost("vote", json!({"seat": nonce(820), "poll": pid, "option": 0})).await.unwrap().1["counted"], false);
+    assert_eq!(qpost("vote", json!({"seat": nonce(821), "poll": pid, "option": 1})).await.unwrap().1["counted"], true);
+    refused(qpost("vote", json!({"seat": nonce(821), "poll": pid, "option": 2})).await, "invalid");
+    refused(qpost("vote", json!({"seat": nonce(829), "poll": pid, "option": 0})).await, "forbidden");
+    let (_, feed) = qpost("feed", json!({"seat": nonce(820)})).await.unwrap();
+    assert_eq!(
+        (feed["poll"]["options"].clone(), feed["poll"]["counts"].clone(), feed["poll"]["mine"].clone()),
+        (json!(["Monday", "Friday"]), json!([0, 2]), json!(1))
+    );
+    assert_eq!(
+        t.scalar::<i64>(&acme, "select count(*) from live_poll_vote where tenant_id = $1 and poll = $2", Uuid::parse_str(pid.as_str().unwrap()).unwrap()).await,
+        2
+    );
+    k.run_action(&asha, "Broadcast", qa, "close_poll", json!({"poll": pid})).await.unwrap();
+    refused(qpost("vote", json!({"seat": nonce(821), "poll": pid, "option": 0})).await, "conflict");
+    // Ended: nobody asks; past the retention days what viewers wrote and voted goes.
+    t.post(&acme, Some(&asha), qa, "end", Value::Null).await.unwrap();
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "Still there?"})).await, "conflict");
+    t.sql(&acme, "update e_broadcast set ended_at = now() - interval '40 days' where tenant_id = $1 and id = $2", qa).await;
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
+    for table in ["e_broadcast_question", "e_broadcast_poll"] {
+        let n: i64 = t.scalar(&acme, &format!("select count(*) from {table} where tenant_id = $1 and broadcast = $2"), qa).await;
+        assert_eq!(n, 0, "{table}");
+    }
 
     // ───────────── presenting and watching as operations, for signed-in people and their agents ─────────────
     let gated = t.broadcast(&asha, json!({"title": "Through the gate", "audience": "Members"})).await;

@@ -140,6 +140,45 @@
         returns: {type: object, properties: {status: {type: [string, "null"]}, text: {type: string}, path: {type: string}, url: {type: string}, token: {type: string}, expires_at: {type: string, format: date-time}}}
         completion: "While the broadcast is Live the caller holds a seat and the answer a pass to watch it for three minutes; otherwise the answer is its state in the workspace's words; a full broadcast is refused"
         answer_once: {fields: [token, url], then: "Watch again for a new pass"}
+    # Questions and polls (src/qa.rs): viewers ask and vote from the watch page; these are the presenter's side.
+    - name: questions
+      label: Questions
+      permission: read
+      read_only: true
+      contract:
+        effect: query
+        returns: {type: object, properties: {questions: {type: array, items: {type: object, properties: {id: {type: string, format: uuid, x-ferrum-link: BroadcastQuestion}, text: {type: string}, name: {type: [string, "null"]}, status: {type: string}}}}}}
+        completion: "Every question asked of the broadcast, oldest first, with its status"
+    - name: moderate_question
+      label: Moderate a Question
+      permission: write
+      params:
+        - {name: question, type: data, label: Question, required: true, description: "The question's id"}
+        - {name: to, type: select, label: Make It, options: [Shown, Answered, Hidden], required: true}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {question: {type: string, format: uuid, x-ferrum-link: BroadcastQuestion}, status: {type: string}}}
+        completion: "The question is Shown, Answered or Hidden (only forward: Waiting, Shown, Answered; Hidden for good); viewers see shown and answered ones at their next look"
+    - name: open_poll
+      label: Open a Poll
+      permission: write
+      condition: "doc.status == 'Scheduled' || doc.status == 'Live'"
+      params:
+        - {name: question, type: data, label: Question, required: true}
+        - {name: options, type: text, label: Answers, required: true, description: "2 to 10, one a line"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {poll: {type: string, format: uuid, x-ferrum-link: BroadcastPoll}, status: {type: string}}}
+        completion: "The poll is Open and is the broadcast's only open one (the one before is Closed); each viewer's seat votes in it once"
+    - name: close_poll
+      label: Close a Poll
+      permission: write
+      params:
+        - {name: poll, type: data, label: Poll, required: true, description: "The poll's id"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {poll: {type: string, format: uuid, x-ferrum-link: BroadcastPoll}, closed: {type: boolean}}}
+        completion: "The poll is Closed and takes no more votes; its counts stay"
     - name: revoke_links
       label: Revoke All Links
       permission: write
@@ -185,3 +224,32 @@
         returns: {type: object, properties: {revoked: {type: integer}}}
         completion: "The link is revoked: it renews nothing, and the relay's next question about a session opened with it is refused"
   list: {columns: [broadcast, kind, label, expires_at, revoked_at], sort: created_at desc}
+
+- name: BroadcastQuestion
+  label: Question
+  kind: master
+  module: live
+  title_field: text
+  description: "A viewer's question to a broadcast, asked from the watch page by the seat they watch from (no name is needed). Waiting until a presenter shows, answers or hides it with the broadcast's Moderate a Question; viewers see only shown and answered ones. Deleted with the broadcast's links after the retention days."
+  fields:
+    - {name: broadcast, type: link, to: Broadcast, required: true, on_delete: cascade, in_list: true, in_filter: true}
+    - {name: text, type: text, required: true, max_length: 500, in_list: true}
+    - {name: asker_name, type: data, max_length: 80, in_list: true, description: "What the asker typed as a name, if anything"}
+    - {name: status, type: select, options: [Waiting, Shown, Answered, Hidden], default: Waiting, read_only: true, no_copy: true, in_list: true, in_filter: true}
+    - {name: seat, type: data, read_only: true, hidden: true, no_copy: true, description: "The keyed hash of the seat it was asked from: no name"}
+  indexes: [[broadcast, status], [broadcast, seat]]
+  list: {columns: [broadcast, text, asker_name, status], sort: created_at desc}
+
+- name: BroadcastPoll
+  label: Poll
+  kind: master
+  module: live
+  title_field: question
+  description: "A question with answers put to a broadcast's viewers; each seat votes once. Opened and closed with the broadcast's actions; one open at a time."
+  fields:
+    - {name: broadcast, type: link, to: Broadcast, required: true, on_delete: cascade, in_list: true, in_filter: true}
+    - {name: question, type: data, required: true, max_length: 200, in_list: true}
+    - {name: options, type: text, required: true, max_length: 1200, description: "One answer a line"}
+    - {name: status, type: select, options: [Open, Closed], default: Open, read_only: true, no_copy: true, in_list: true}
+  indexes: [[broadcast, status]]
+  list: {columns: [broadcast, question, status], sort: created_at desc}

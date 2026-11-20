@@ -17,6 +17,7 @@ mod keys;
 mod links;
 mod module;
 mod page;
+mod qa;
 pub mod relay;
 mod reports;
 mod seats;

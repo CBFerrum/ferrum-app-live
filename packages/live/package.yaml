@@ -9,7 +9,7 @@ modules:
     label: Live
     icon: video
     order: 48
-    items: [Broadcast, BroadcastLink, LiveSettings, report:live_broadcasts, report:live_audience, report:live_audience_curve]
+    items: [Broadcast, BroadcastLink, BroadcastQuestion, BroadcastPoll, LiveSettings, report:live_broadcasts, report:live_audience, report:live_audience_curve]
 
 roles:
   - name: Live User
@@ -23,6 +23,8 @@ roles:
     permissions:
       - {entity: Broadcast, read: true, write: true, create: true, delete: true, export: true}
       - {entity: BroadcastLink, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: BroadcastQuestion, read: true, export: true}
+      - {entity: BroadcastPoll, read: true, export: true}
       - {entity: LiveSettings, read: true, write: true, create: true}
 
 # A presenter named on a broadcast or on a one-time link is a person: found by address, blanked on erasure.

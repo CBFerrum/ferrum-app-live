@@ -33,7 +33,7 @@ const PASS_MINUTES: i64 = 3;
 pub const REVALIDATE: i64 = 30;
 
 /// Seats stay live this long after their last renewal: a token's life and a minute and a half for a late one.
-fn window(set: &settings::Settings) -> i64 {
+pub(crate) fn window(set: &settings::Settings) -> i64 {
     set.watch_minutes() * 60 + 90
 }
 
@@ -41,15 +41,15 @@ fn nonce_ok(n: &str) -> bool {
     (16..=64).contains(&n.len()) && n.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
-fn gone() -> Error {
+pub(crate) fn gone() -> Error {
     Error::NotFound("broadcast".into())
 }
 
-async fn system(k: &Kernel, tenant: Uuid) -> Result<Ctx> {
+pub(crate) async fn system(k: &Kernel, tenant: Uuid) -> Result<Ctx> {
     Ok(Ctx::system(tenant, k.registry.schema(tenant).await?))
 }
 
-async fn read(k: &Kernel, sys: &Ctx, tx: &mut Tx, id: Uuid) -> Result<Doc> {
+pub(crate) async fn read(k: &Kernel, sys: &Ctx, tx: &mut Tx, id: Uuid) -> Result<Doc> {
     k.get_tx(sys, tx, "Broadcast", id, false).await.map_err(|e| if matches!(e, Error::NotFound(_)) { gone() } else { e })
 }
 
@@ -87,7 +87,15 @@ fn offer(relay: &dyn Relay, set: &settings::Settings, tenant: Uuid, id: Uuid, ac
 }
 
 /// Who a watcher is, if they may watch: the platform's rights first, then a viewing link, then the open door.
-async fn viewer(k: &Kernel, tx: &mut Tx, set: &settings::Settings, doc: &Doc, tenant: Uuid, id: Uuid, who: &Caller<'_>) -> Result<Option<(Viewer, String)>> {
+pub(crate) async fn viewer(
+    k: &Kernel,
+    tx: &mut Tx,
+    set: &settings::Settings,
+    doc: &Doc,
+    tenant: Uuid,
+    id: Uuid,
+    who: &Caller<'_>,
+) -> Result<Option<(Viewer, String)>> {
     let level = set.audience(doc);
     let nonce = who.nonce.filter(|n| nonce_ok(n)).unwrap_or_default().to_string();
     if let Some(ctx) = who.ctx
@@ -103,7 +111,7 @@ async fn viewer(k: &Kernel, tx: &mut Tx, set: &settings::Settings, doc: &Doc, te
     Ok((level >= 3).then_some((Viewer::Browser, nonce)))
 }
 
-fn seat_kind(v: &Viewer) -> &'static str {
+pub(crate) fn seat_kind(v: &Viewer) -> &'static str {
     match v {
         Viewer::Person(_) => "person",
         Viewer::Link(_) => "link",

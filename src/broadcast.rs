@@ -89,12 +89,26 @@ impl DocHook for BroadcastHook {
             "issue_publisher_link" => links::issue(hc.kernel, ctx, hc.tx, doc, "Presenter", params).await?,
             "revoke_links" => json!({"revoked": links::revoke_all(hc.tx, ctx.tenant, doc_id(doc)?).await?}),
             // What the routes do for a signed-in person, in the gate's transaction.
-            "present" => session::present_in(hc.kernel, self.relay.as_ref(), hc.tx, ctx.tenant, doc_id(doc)?, &Caller { ctx: Some(ctx), link: None, nonce: None }, false).await?,
-            "watch" => match session::watch_in(hc.kernel, self.relay.as_ref(), hc.tx, ctx.tenant, doc_id(doc)?, &Caller { ctx: Some(ctx), link: None, nonce: None }, false).await? {
+            "present" => {
+                session::present_in(hc.kernel, self.relay.as_ref(), hc.tx, ctx.tenant, doc_id(doc)?, &Caller { ctx: Some(ctx), link: None, nonce: None }, false)
+                    .await?
+            }
+            "watch" => match session::watch_in(
+                hc.kernel,
+                self.relay.as_ref(),
+                hc.tx,
+                ctx.tenant,
+                doc_id(doc)?,
+                &Caller { ctx: Some(ctx), link: None, nonce: None },
+                false,
+            )
+            .await?
+            {
                 Outcome::Offer(v) | Outcome::State(v) => v,
                 Outcome::Full(text) => return Err(Error::Conflict(text)),
             },
-            _ => return Ok(None),
+            // Questions and polls (qa.rs), moderated as the broadcast's own system, after the gate allowed the caller.
+            other => return crate::qa::action(hc.kernel, &sys, hc.tx, doc, other, params).await,
         }))
     }
 }
