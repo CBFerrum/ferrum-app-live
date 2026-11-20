@@ -35,6 +35,7 @@ function camera() {
     configurable: true,
     value: {
       getUserMedia: vi.fn(async () => stream),
+      getDisplayMedia: vi.fn(),
       enumerateDevices: vi.fn(async () => [info("cam1", "videoinput", "Built-in camera"), info("cam2", "videoinput", "Desk camera"), info("mic1", "audioinput", "Desk microphone"), info("out", "audiooutput", "Speakers")]),
     },
   });
@@ -142,6 +143,13 @@ describe("the control page", () => {
     expect(el?.getAttribute("source")).toBe("camera");
     expect(el?.querySelector("video")).not.toBeNull();
     expect(page.text()).toContain("renews itself at");
+    // The presenter switches what they send to a screen and back, on the same element, without a new start.
+    await press(page.button("Share your screen"));
+    expect(el?.getAttribute("source")).toBe("screen");
+    expect(page.button("Share your screen").getAttribute("aria-pressed")).toBe("true");
+    await press(page.button("Camera"));
+    expect(el?.getAttribute("source")).toBe("camera");
+    expect(server.count("POST /api/app/live/broadcasts/b1/publish")).toBe(1);
 
     // The access is renewed at two thirds of its hour, and the picture is pointed at the new address.
     await advance(2_401_000);

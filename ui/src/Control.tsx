@@ -3,7 +3,7 @@
 // so when a renewal is refused, since the stream stops when the access it was given runs out.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Radio, Square } from "lucide-react";
+import { MonitorUp, Radio, Square, Video } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useBlocker, useParams } from "react-router";
 import { ApiError, isolate, t } from "@ferrum/client";
@@ -69,6 +69,8 @@ function Control({ id }: { id: string }) {
   );
 }
 
+type Source = "camera" | "screen";
+
 export function View({ b }: { b: Broadcast }) {
   const qc = useQueryClient();
   const id = b.id;
@@ -77,6 +79,13 @@ export function View({ b }: { b: Broadcast }) {
   const verdict = useMemo(() => whyNot(env, support), [env, support]);
   const chosen = useRef<Chosen>({});
   const stop = useRef<() => void>(() => undefined);
+  // What the capture element sends: the camera, or a screen or window the browser asks the presenter to pick.
+  const [source, setSource] = useState<Source>("camera");
+  const publisher = useRef<HTMLElement | null>(null);
+  const canShare = typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getDisplayMedia === "function";
+  useEffect(() => {
+    publisher.current?.setAttribute("source", source);
+  }, [source]);
   const capture = useCapture(
     useCallback((c: Chosen) => {
       chosen.current = c;
@@ -214,9 +223,21 @@ export function View({ b }: { b: Broadcast }) {
                   onLink={(l) => void session.linkChanged(l)}
                   onElement={(el) => {
                     stop.current();
+                    publisher.current = el;
+                    el?.setAttribute("source", source);
                     stop.current = el ? chooseDevices(el as PublishElement, chosen.current) : () => undefined;
                   }}
                 />
+                {canShare && (
+                  <div className="row" role="group" aria-label={t("What you send")}>
+                    <Button aria-pressed={source === "camera"} onClick={() => setSource("camera")}>
+                      <Video size={16} aria-hidden="true" /> {t("Camera")}
+                    </Button>
+                    <Button aria-pressed={source === "screen"} onClick={() => setSource("screen")}>
+                      <MonitorUp size={16} aria-hidden="true" /> {t("Share your screen")}
+                    </Button>
+                  </div>
+                )}
                 {note && (
                   <Alert tone={note.tone}>
                     <strong>{note.title}.</strong> {isolate(note.text)}
