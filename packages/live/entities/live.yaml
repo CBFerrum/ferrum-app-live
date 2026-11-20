@@ -9,8 +9,8 @@
     - {name: key_changed_at, type: datetime, read_only: true}
     - {name: path_prefix, type: data, default: live, max_length: 40, description: "The first part of every broadcast's path on the relay (letters, digits, dash, underscore)"}
     - {name: stream_name, type: data, default: live.hang, max_length: 60, description: "The name the presenter's stream has under the broadcast's path (the catalog format follows its suffix)"}
-    - {name: watch_token_minutes, type: int, default: 10, min: 1, max: 60, description: "How long a viewer's token lives. The relay ends a session at its token's expiry, so a player renews it before then"}
-    - {name: publish_token_minutes, type: int, default: 60, min: 5, max: 720, description: "How long a presenter's token lives (the stream is cut at its expiry unless renewed first)"}
+    - {name: watch_token_minutes, type: int, default: 10, min: 1, max: 60, description: "How long a viewer's session lasts before the player renews it (a pass to connect lasts three minutes; Live checks the viewer's right every 30 seconds)"}
+    - {name: publish_token_minutes, type: int, default: 60, min: 5, max: 720, description: "How long a presenter's session lasts before the page renews it (a pass to connect lasts three minutes; Live checks the presenter's right every 30 seconds)"}
     - {name: default_audience, type: select, options: [Members, Portal, Link, Public], default: Members, description: "Who may watch a broadcast that names no audience. Each includes the ones before it: Members (signed-in people), Portal (and portal people), Link (and anyone with a viewing link), Public (anyone)"}
     - {name: default_capacity, type: int, default: 0, min: 0, description: "Viewers at once, for a broadcast that names none; 0 = no limit"}
     - {name: recording_default, type: check, default: false, description: "Whether broadcasts are recorded when they say nothing. Needs a recorder beside the relay: see docs/moq.md"}

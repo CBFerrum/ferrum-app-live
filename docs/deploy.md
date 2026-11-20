@@ -9,12 +9,18 @@ relay (`moq-relay`, pinned at 0.17.16: docs/moq.md) carries them, as LiveKit doe
 | Part | Image | Where it listens | Notes |
 |---|---|---|---|
 | Relay | `moqdev/moq-relay:0.17.16` | **UDP 443** (QUIC, WebTransport), **TCP 443** (HTTPS, WebSocket fallback), `8080` plain HTTP for `/health` | the only thing the internet reaches |
-| Auth server | `moqdev/moq:0.14.16` (`moq auth serve`) | `127.0.0.1:4440` inside the relay's own network | the relay asks it who may do what; **`http://` is accepted for a loopback address only**, so it shares the relay's network (a second container in the pod, `network_mode: service:` in compose) and is published nowhere |
-| Ferrum with Live | the platform's image | as before | asks `/health`; signs tokens with the key in Live Settings |
+| Ferrum with Live | the platform's image | as before | asks `/health`; signs passes with the key in Live Settings and is the relay's auth server |
 
-The relay verifies nothing itself in 0.17: it POSTs each session to the auth server (`[auth] url`), which verifies
-the JWT against the key files in its key directory and answers with a grant. Live's tokens are HS256 JWTs of
-`root` (this broadcast's path), `publish` or `subscribe` `["**"]` and `exp`.
+The relay verifies nothing itself in 0.17: it POSTs each session to its auth server (`[auth] url`) when it opens and
+again while it lasts, and the answer is a grant or a refusal. **Live is that auth server**:
+`https://<ferrum host>/api/site/<workspace>/live/relay/auth` (https: the relay takes `http://` for a loopback address
+only). A pass is an HS256 JWT of `root` (this broadcast's path), `publish` or `subscribe` `["**"]`, `exp` (three
+minutes: long enough to connect) and `sub` (whose it is). At `connect` Live checks the signature, the expiry, the path
+and that the holder may present or watch now; at each `revalidate` (every 30 seconds) it checks the holder's right
+again, so a session stops within half a minute of the broadcast ending, a link being revoked, a presenter being taken
+off, a person losing the right or a seat going stale. `moq auth serve` is not used: it would admit a pass until its
+expiry whatever happened since. One relay serves one workspace (its auth address names the workspace); a relay shared
+by several workspaces needs an installation-wide route the platform does not have yet.
 
 ## Compose
 
@@ -23,18 +29,15 @@ the JWT against the key files in its key directory and answers with a grant. Liv
     docker compose -f deploy/docker-compose.yml -f deploy/live.yml --env-file deploy/.env up -d
 
 Before the first start, in `deploy/live/` (the example `relay.toml` is there): `cert.pem` and `key.pem` for the
-relay's public name, and `keys/<kid>.jwk`.
+relay's public name, and the auth address in `relay.toml` (`[auth] url`, above).
 
-1. **A key.** `docker run --rm -v "$PWD/live/keys:/out" moqdev/moq:0.14.16 auth generate --id ferrum-1 --out-dir /out`
-   writes `ferrum-1.jwk` (`--out-dir` names the file `{kid}.jwk`, which is how the auth server finds it; the file holds the
-   JWK as base64url text, which both the auth server and Live read). It is a symmetric HS256 key: the auth server and
-   Ferrum share the secret. Paste the file's text into **Set Signing Key**.
+1. **A key.** `docker run --rm -v "$PWD:/out" moqdev/moq:0.14.16 auth generate --id ferrum-1 --out-dir /out`
+   writes `ferrum-1.jwk` (the JWK as base64url text). Paste the file's text into **Set Signing Key**, then delete the
+   file: only Live signs and checks passes, so the key lives in the vault alone.
 2. **Live Settings** (in the app): *Relay Address* `https://live.example.com`, *Relay Health Address*
    `http://live-relay:8080/health` (as the server reaches it), then **Set Signing Key** with the same key text. The
-   app keeps it in the platform's vault, its one home, and never shows it again; it shows only the key's name. The
-   file in `keys/` is the same text, which you copy there yourself: Live declares no service for the platform's
-   `ferrum task render` to write `{kid}.jwk` from Live's secret `relay-signing-key`. A key with the name of the one in use and another secret is refused: the relay holds one
-   file a name. Then set the same address in the app's own
+   app keeps it in the platform's vault, its one home, and never shows it again; it shows only the key's name. A key
+   with the name of the one in use and another secret is refused. Then set the same address in the app's own
    settings (*Relay address for browsers*): the interface inside Ferrum may open its connection to the relay only
    at the address that setting names (the manifest's `ui.csp.connect`).
 3. **Certificate.** A publicly trusted one for the name (browsers do not accept a self-signed certificate for
@@ -44,9 +47,9 @@ relay's public name, and `keys/<kid>.jwk`.
 
 ## Kubernetes
 
-`deploy/k8s/live.yaml`: a ConfigMap (the same `relay.toml`), a Deployment (relay and auth in one pod, a probe on
-`/health`), a LoadBalancer Service with **UDP and TCP on 443**, a ClusterIP Service for the health check and a
-NetworkPolicy. Secrets: `live-relay-tls` and `live-relay-keys` (one `<kid>.jwk` per key). The platform's chart
+`deploy/k8s/live.yaml`: a ConfigMap (the same `relay.toml`), a Deployment (the relay, a probe on `/health`), a
+LoadBalancer Service with **UDP and TCP on 443**, a ClusterIP Service for the health check and a NetworkPolicy.
+Secret: `live-relay-tls`. The platform's chart
 (`deploy/helm/ferrum`) lists no component of this kind today (meetings are "run LiveKit with its own Helm chart"
 in operations.md); the same goes here.
 
@@ -75,17 +78,13 @@ Nothing in this repository edits the platform. Its changes, for whoever lands th
 * **Failing over:** a relay that dies drops its sessions. Players reconnect (the components reconnect on their own, with
   the token they hold while it is valid; Live renews it before it runs out). A viewer on a failed relay is picked up by
   another if the cluster has it; the presenter's own relay failing interrupts the stream until the capture element
-  reconnects. The auth server is stateless and runs beside every relay. `[quic] idle_timeout` (10 s) and
+  reconnects. Every relay asks the same Live. `[quic] idle_timeout` (10 s) and
   `drain_timeout` (10 s) are the relay's own bounds.
-* **Rotating the key without dropping anyone:** make a new key file with a new `kid`, put it in the key
-  directory beside the old one (a Kubernetes Secret volume updates in place; the auth server reads the directory
-  on every request, so no restart), then *Set Signing Key* in Live Settings. New tokens are signed with the new key;
-  tokens signed with the old one verify until they expire (at most the presenter's token life, 60 minutes by
-  default). Remove the old file afterwards. The auth server is not started with `--revalidate`, so removing a key
-  does not close sessions that are already admitted.
-* **A person who loses the right** is stopped at their next renewal: at most the viewer token life (10 minutes by default)
-  plus what they have left. For faster, lower *Viewer token minutes* in Live Settings (down to 1); the relay ends a
-  session at its token's expiry whatever else happens.
+* **Rotating the key without dropping anyone:** *Set Signing Key* with a new key (a new `kid`). New passes are signed
+  with it; sessions admitted under the key before it go on (Live answers their revalidations under that key), and no
+  new session opens with a pass signed by it, so a key replaced because it leaked mints nothing new. Rotate twice and
+  sessions from two keys back stop at their next revalidation (the players reconnect with new passes).
+* **A person who loses the right** is stopped at the relay's next question: within 30 seconds.
 
 ## The doctor check
 

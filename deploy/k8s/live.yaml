@@ -1,10 +1,8 @@
-# Live video on Kubernetes (docs/deploy.md): moq-relay and its auth server in one pod (the relay reaches its auth
-# server on loopback), a Service for UDP and TCP 443, a probe on /health. Apply it in Ferrum's namespace:
+# Live video on Kubernetes (docs/deploy.md): moq-relay, whose auth server is Live itself ([auth] url below), a Service
+# for UDP and TCP 443, a probe on /health. Apply it in Ferrum's namespace:
 #   kubectl -n ferrum apply -f deploy/k8s/live.yaml
-# Before: the Secrets live-relay-tls (tls.crt, tls.key: cert-manager makes it for you from a Certificate for the
-# relay's name) and live-relay-keys (one <kid>.jwk file per signing key: kubectl create secret generic
-# live-relay-keys --from-file=<kid>.jwk). Mounted Secrets update in place, and the auth server reads the key
-# directory on every request: a new key file takes effect without a restart, an old one stays until you remove it.
+# Before: the Secret live-relay-tls (tls.crt, tls.key: cert-manager makes it for you from a Certificate for the
+# relay's name). The signing key lives in Live's vault only.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -23,7 +21,7 @@ data:
     [web.http]
     listen = "[::]:8080"
     [auth]
-    url = "http://127.0.0.1:4440/"
+    url = "https://ferrum.example.com/api/site/your-workspace/live/relay/auth"
     [internal]
     listen = "127.0.0.1:9101"
 ---
@@ -62,17 +60,9 @@ spec:
           volumeMounts:
             - {name: config, mountPath: /config, readOnly: true}
             - {name: certs, mountPath: /certs, readOnly: true}
-        - name: auth
-          image: moqdev/moq:0.14.16
-          args: ["auth", "serve", "--listen", "127.0.0.1:4440", "--key-dir", "/keys"]
-          resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 128Mi}}
-          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
-          volumeMounts:
-            - {name: keys, mountPath: /keys, readOnly: true}
       volumes:
         - {name: config, configMap: {name: live-relay}}
         - {name: certs, secret: {secretName: live-relay-tls}}
-        - {name: keys, secret: {secretName: live-relay-keys}}
 ---
 # The address browsers dial: one name, UDP and TCP on 443. Mixed-protocol load balancers need Kubernetes 1.26 or
 # newer (or a provider that offers them); otherwise use two Services sharing the address. Preserve the client address

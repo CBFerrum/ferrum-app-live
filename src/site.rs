@@ -9,6 +9,8 @@
 //! * `GET /broadcasts/{id}/embed`, `GET /embed?entity=&record=`: what another app needs to put the player
 //!   beside its own content.
 //! * `GET /watch/{id}`, `GET /present/{id}`: the pages. A link's secret is the address's fragment (`#k=`).
+//! * `POST /relay/auth {event, path, token | query}`: the relay's question at a session's start and every half minute
+//!   while it lasts (docs/moq.md); a grant, or 403 when the pass or its holder's right is gone.
 
 use crate::relay::Relay;
 use crate::session::{self, Caller, Outcome};
@@ -59,6 +61,8 @@ impl Site for LiveSite {
                 None => return Err(Error::NotFound("endpoint".into())),
             },
             ("GET", ["embed"]) => self.embed_for_record(k, &req).await?,
+            // The relay's auth server (`--auth-url`): it asks at every session's start and again while it lasts.
+            ("POST", ["relay", "auth"]) => json_response(200, &session::admit(k, self.relay.as_ref(), tenant, &Value::Object(body(&req)?)).await?),
             ("GET", ["broadcasts", id, "embed"]) => {
                 let link = req.query.get("link").and_then(Value::as_str);
                 let who = Caller { ctx: req.user.as_ref(), link, nonce: None };

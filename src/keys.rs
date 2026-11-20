@@ -57,9 +57,21 @@ pub(crate) fn mac(key: &[u8], message: &[u8]) -> Vec<u8> {
     m.finalize().into_bytes().to_vec()
 }
 
+/// The key before the relay's signing key, kept by Set Signing Key so that sessions admitted under it go on.
+pub const PREVIOUS: &str = "relay-signing-key-previous";
+
 /// The relay's signing key in the workspace, as the relay's key directory holds it; none until one is set.
 pub(crate) async fn relay_key(k: &Kernel, tenant: Uuid) -> Result<Option<Zeroizing<Vec<u8>>>> {
-    match handle()?.reveal(k, Scope::Workspace(tenant), RELAY).await {
+    revealed(k, tenant, RELAY).await
+}
+
+/// The signing key before the one in use; none when it was never changed.
+pub(crate) async fn previous_relay_key(k: &Kernel, tenant: Uuid) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    revealed(k, tenant, PREVIOUS).await
+}
+
+async fn revealed(k: &Kernel, tenant: Uuid, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    match handle()?.reveal(k, Scope::Workspace(tenant), name).await {
         Ok(key) => Ok(Some(key)),
         Err(Error::NotFound(_)) => Ok(None),
         Err(e) => Err(unavailable(e)),
@@ -69,6 +81,9 @@ pub(crate) async fn relay_key(k: &Kernel, tenant: Uuid) -> Result<Option<Zeroizi
 /// Sets the relay's signing key (Set Signing Key): its one home.
 pub(crate) async fn set_relay(k: &Kernel, tenant: Uuid, material: &str) -> Result<()> {
     let rule = Rule { reveal: true, ..Default::default() };
+    if let Some(before) = relay_key(k, tenant).await? {
+        handle()?.set(k, Scope::Workspace(tenant), PREVIOUS, New::Value(before), rule.clone()).await.map_err(unavailable)?;
+    }
     let value = New::Value(Zeroizing::new(material.as_bytes().to_vec()));
     handle()?.set(k, Scope::Workspace(tenant), RELAY, value, rule).await.map_err(unavailable).map(|_| ())
 }

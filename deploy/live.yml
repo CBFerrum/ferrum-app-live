@@ -3,9 +3,9 @@
 #   docker compose -f deploy/docker-compose.yml -f deploy/live.yml --env-file deploy/.env up -d
 # In deploy/.env: FERRUM_LIVE_HOST (the relay's public name, whose certificate you give it below). Before the
 # first start, put in deploy/live/: cert.pem and key.pem (a publicly trusted certificate for that name, UDP 443
-# and TCP 443 open to the internet), and keys/<kid>.jwk (the signing key: `moq auth generate --out keys/<kid>.jwk`
-# with a kid; see docs/deploy.md). Then in Live Settings (in the app): the relay address https://<host> and the
-# same key, with Set Signing Key.
+# and TCP 443 open to the internet), and in relay.toml the auth address (Live: https://<ferrum host>/api/site/
+# <workspace>/live/relay/auth). Then in Live Settings (in the app): the relay address https://<host> and a key made
+# by `moq auth generate` (docs/deploy.md), with Set Signing Key; the key lives in the vault only.
 services:
   live-relay:
     image: moqdev/moq-relay:0.17.16
@@ -25,20 +25,6 @@ services:
     security_opt: [no-new-privileges:true]
     # No health check here: the image holds the relay and nothing to ask it with. The relay answers GET /health
     # on its plain-HTTP listener (8080, inside the stack's network); Live's doctor check asks it there.
-
-  # The relay asks this server who may do what (--auth-url). It must be on the relay's own loopback (the relay
-  # accepts http:// for a loopback host only), so it shares the relay's network and is published nowhere.
-  live-auth:
-    image: moqdev/moq:0.14.16
-    restart: unless-stopped
-    network_mode: "service:live-relay"
-    command: ["auth", "serve", "--listen", "127.0.0.1:4440", "--key-dir", "/keys"]
-    volumes:
-      - ./live/keys:/keys:ro
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    depends_on: [live-relay]
 
   ferrum:
     environment:

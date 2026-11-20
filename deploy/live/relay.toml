@@ -15,7 +15,8 @@ key = "/certs/key.pem"
 listen = "[::]:8080"         # /health for the stack and the probes; never published (no port line for it)
 
 [auth]
-url = "http://127.0.0.1:4440/"   # moq auth serve, in the same network namespace; verifies the tokens Live signs
+# Live answers who may do what, at each session's start and every 30 seconds while it lasts (docs/deploy.md).
+url = "https://ferrum.example.com/api/site/your-workspace/live/relay/auth"
 
 [cache]
 duration = "30s"             # the relay's default: also how long a HLS gateway could serve a segment from it
