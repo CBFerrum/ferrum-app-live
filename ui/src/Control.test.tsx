@@ -46,6 +46,7 @@ function camera() {
 const base = (over: Record<string, () => unknown> = {}) => ({
   "GET /api/reports/live_broadcasts": () => ({ rows: [{ title: "Launch day", status: "Live", started_at: "2026-11-13T09:00:00Z", ended_at: null, viewers_now: 23, viewers_peak: 40, viewers_total: 50 }] }),
   "GET /api/app/live/broadcasts/b1/embed": () => ({ id: "b1", status: "Scheduled", title: "Launch day", page: "https://acme.example.com/api/site/acme/live/watch/b1", iframe: "" }),
+  "POST /api/v1/Broadcast/b1/actions/questions": () => ({ questions: [] }),
   ...over,
 });
 

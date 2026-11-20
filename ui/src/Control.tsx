@@ -12,6 +12,7 @@ import { About, audienceLabel, Badge, Copyable } from "./common";
 import { DeviceCheck, useCapture, useSupport, whyNot, type Chosen } from "./Capture";
 import { audienceQuery, broadcastQuery, describeQuery, refresh, viewersNow, watchAddress } from "./data";
 import { LinkDialog, type Kind } from "./Links";
+import { Moderate } from "./Qa";
 import { chooseDevices, type PublishElement } from "./moq";
 import type { Broadcast } from "./model";
 import type { SessionState } from "./session";
@@ -244,6 +245,7 @@ export function View({ b }: { b: Broadcast }) {
                   </Alert>
                 )}
                 {!note && state.nextRenewal && <p className="muted">{t("Your access renews itself at {time}. Leave this page open.", { time: clock(state.nextRenewal) })}</p>}
+                <Moderate id={id} />
               </section>
             ) : (
               <>

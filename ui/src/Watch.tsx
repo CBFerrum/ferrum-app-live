@@ -11,6 +11,7 @@ import { isolate, t } from "@ferrum/client";
 import { Alert, Button, Spinner, StatePanel, useShellTitle } from "@ferrum/kit";
 import { safeUrl } from "./common";
 import { Controls } from "./Controls";
+import { Ask } from "./Qa";
 import { describeQuery } from "./data";
 import type { SessionState } from "./session";
 import { Stage } from "./Stage";
@@ -80,6 +81,7 @@ export function Viewer({ id }: { id: string }) {
               <span role={note.tone === "error" ? "alert" : "status"}>{isolate(note.text)}</span>
             </Alert>
           )}
+          <Ask id={id} />
         </div>
       ) : null;
     case "waiting":

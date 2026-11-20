@@ -57,6 +57,7 @@ const routes = (over: Record<string, () => unknown> = {}) => ({
   "GET /api/app/live/broadcasts/b1/embed": () => info,
   "POST /api/app/live/broadcasts/b1/watch": () => offer(),
   "POST /api/app/live/broadcasts/b1/watch/leave": () => ({ left: true }),
+  "POST /api/app/live/broadcasts/b1/feed": () => ({ questions: [], poll: null }),
   ...over,
 });
 const FAKE = { useFakeTimers: () => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }) };
