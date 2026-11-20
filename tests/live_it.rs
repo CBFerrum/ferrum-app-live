@@ -624,6 +624,7 @@ async fn scenario() {
     k.erase_personal_data(&acme.admin, "pat@outside.test", "asked to").await.unwrap();
     let g = t.get(&asha, guest).await;
     assert_eq!((g["presenter_name"].clone(), g["presenter_email"].clone()), (Value::Null, Value::Null), "{g:?}");
+    assert_eq!(g["replay_url"], Value::Null, "the recording of an erased presenter is not offered: {g:?}");
     // …and a person named on a broadcast's presenters.
     let named = t.broadcast(&asha, json!({"title": "Named", "publishers": [{"email": "lee@elsewhere.test", "name": "Lee"}]})).await;
     k.erase_personal_data(&acme.admin, "lee@elsewhere.test", "asked to").await.unwrap();

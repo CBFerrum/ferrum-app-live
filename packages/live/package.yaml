@@ -28,7 +28,8 @@ roles:
 # A presenter named on a broadcast or on a one-time link is a person: found by address, blanked on erasure.
 # What viewers leave (counts) holds no name and no address, only keyed seats that upkeep deletes.
 personal_data:
-  - {entity: Broadcast, match: presenter_email, erase: [presenter_name, presenter_email]}
+  # The recording shows its presenter: erasing them takes its replay link too (the objects are the recorder's; see README).
+  - {entity: Broadcast, match: presenter_email, erase: [presenter_name, presenter_email, replay_url]}
   - {entity: Broadcast, match: publishers.email, erase: [publishers]}
   - {entity: BroadcastLink, match: presenter_email, erase: [presenter_name, presenter_email, label]}
 handover:
