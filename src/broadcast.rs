@@ -2,11 +2,14 @@
 //! to everyone; only the functions here (a presenter starting, ending, the upkeep) change it, in the transaction
 //! that holds the broadcast's row.
 
+use crate::relay::Relay;
+use crate::session::{self, Caller, Outcome};
 use crate::{PACKAGE, doc_id, links, s, seats, settings, ts};
 use async_trait::async_trait;
 use ferrum_kernel::{Ctx, Doc, DocHook, Error, FieldError, HookCtx, Kernel, Result, Tx};
 use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// The origins listed in a broadcast's `frame_origins` (one per line), each checked as the platform checks them.
@@ -21,7 +24,9 @@ pub fn origins(text: &str) -> std::result::Result<Vec<String>, String> {
     Ok(out)
 }
 
-pub struct BroadcastHook;
+pub struct BroadcastHook {
+    pub relay: Arc<dyn Relay>,
+}
 
 #[async_trait]
 impl DocHook for BroadcastHook {
@@ -83,6 +88,12 @@ impl DocHook for BroadcastHook {
             "issue_viewer_link" => links::issue(hc.kernel, ctx, hc.tx, doc, "Viewer", params).await?,
             "issue_publisher_link" => links::issue(hc.kernel, ctx, hc.tx, doc, "Presenter", params).await?,
             "revoke_links" => json!({"revoked": links::revoke_all(hc.tx, ctx.tenant, doc_id(doc)?).await?}),
+            // What the routes do for a signed-in person, in the gate's transaction.
+            "present" => session::present_in(hc.kernel, self.relay.as_ref(), hc.tx, ctx.tenant, doc_id(doc)?, &Caller { ctx: Some(ctx), link: None, nonce: None }, false).await?,
+            "watch" => match session::watch_in(hc.kernel, self.relay.as_ref(), hc.tx, ctx.tenant, doc_id(doc)?, &Caller { ctx: Some(ctx), link: None, nonce: None }, false).await? {
+                Outcome::Offer(v) | Outcome::State(v) => v,
+                Outcome::Full(text) => return Err(Error::Conflict(text)),
+            },
             _ => return Ok(None),
         }))
     }

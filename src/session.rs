@@ -113,14 +113,21 @@ fn seat_kind(v: &Viewer) -> &'static str {
 
 /// `renew`: keep a seat that is live (and refuse when it is not); otherwise take one, if there is one to take.
 pub async fn watch(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &Caller<'_>, renew: bool) -> Result<Outcome> {
-    // Live's keys, taken before the transaction: the vault answers on a connection of its own.
+    let mut tx = k.db.tenant_tx(tenant).await?;
+    let out = watch_in(k, relay, &mut tx, tenant, id, who, renew).await?;
+    tx.commit().await?;
+    Ok(out)
+}
+
+/// The same in the caller's transaction (the `watch` action's).
+pub async fn watch_in(k: &Kernel, relay: &dyn Relay, tx: &mut Tx, tenant: Uuid, id: Uuid, who: &Caller<'_>, renew: bool) -> Result<Outcome> {
+    // Live's keys: the vault answers on a connection of its own.
     let seat_key = keys::current(k, tenant, keys::SEATS).await?;
     let relay_key = keys::relay_key(k, tenant).await?;
     let sys = system(k, tenant).await?;
-    let mut tx = k.db.tenant_tx(tenant).await?;
-    let set = settings::load(k, &sys, &mut tx).await?;
-    let doc = read(k, &sys, &mut tx, id).await?;
-    let Some((viewer, ident)) = viewer(k, &mut tx, &set, &doc, tenant, id, who).await? else { return Err(gone()) };
+    let set = settings::load(k, &sys, tx).await?;
+    let doc = read(k, &sys, tx, id).await?;
+    let Some((viewer, ident)) = viewer(k, tx, &set, &doc, tenant, id, who).await? else { return Err(gone()) };
     if !matches!(viewer, Viewer::Person(_)) && !who.nonce.is_some_and(nonce_ok) {
         return Err(Error::field("seat", "a random id of 16 to 64 letters and digits, made by the page"));
     }
@@ -138,20 +145,19 @@ pub async fn watch(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &
         Viewer::Browser => format!("b:{seat}"),
     };
     let win = window(&set);
-    if seats::renew(&mut tx, tenant, id, &seat, win).await? {
+    if seats::renew(tx, tenant, id, &seat, win).await? {
         let out = offer(relay, &set, tenant, id, Access::Watch, relay_key.as_deref().map(|k| k.as_slice()), subject)?;
-        tx.commit().await?;
         return Ok(Outcome::Offer(out));
     }
     if renew {
         return Err(gone());
     }
     // A new seat: one viewer at a time through here, so the last seat goes to one of two who ask for it together.
-    let doc = broadcast::lock(k, &sys, &mut tx, id).await?;
+    let doc = broadcast::lock(k, &sys, tx, id).await?;
     if s(&doc, "status") != Some("Live") {
         return Ok(Outcome::State(state(&set, &doc)));
     }
-    match seats::take(&mut tx, tenant, id, &seat, win, set.capacity(&doc)).await? {
+    match seats::take(tx, tenant, id, &seat, win, set.capacity(&doc)).await? {
         seats::Taken::Full => Ok(Outcome::Full(set.text("text_full"))),
         taken => {
             if let seats::Taken::New { now, first } = taken {
@@ -160,11 +166,10 @@ pub async fn watch(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &
                     .bind(id)
                     .bind(now)
                     .bind(i64::from(first))
-                    .execute(&mut *tx)
+                    .execute(&mut **tx)
                     .await?;
             }
             let out = offer(relay, &set, tenant, id, Access::Watch, relay_key.as_deref().map(|k| k.as_slice()), subject)?;
-            tx.commit().await?;
             Ok(Outcome::Offer(out))
         }
     }
@@ -187,19 +192,26 @@ pub async fn leave(k: &Kernel, tenant: Uuid, id: Uuid, who: &Caller<'_>) -> Resu
 
 /// A presenter's side. `renew`: only while Live (a presenter link renews after the one start it has).
 pub async fn present(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who: &Caller<'_>, renew: bool) -> Result<Value> {
-    // The relay's key, taken before the transaction.
+    let mut tx = k.db.tenant_tx(tenant).await?;
+    let out = present_in(k, relay, &mut tx, tenant, id, who, renew).await?;
+    tx.commit().await?;
+    Ok(out)
+}
+
+/// The same in the caller's transaction (the `present` action's).
+pub async fn present_in(k: &Kernel, relay: &dyn Relay, tx: &mut Tx, tenant: Uuid, id: Uuid, who: &Caller<'_>, renew: bool) -> Result<Value> {
+    // The relay's key (the vault answers on a connection of its own).
     let relay_key = keys::relay_key(k, tenant).await?;
     let sys = system(k, tenant).await?;
-    let mut tx = k.db.tenant_tx(tenant).await?;
-    let set = settings::load(k, &sys, &mut tx).await?;
-    let doc = broadcast::lock(k, &sys, &mut tx, id).await?;
+    let set = settings::load(k, &sys, tx).await?;
+    let doc = broadcast::lock(k, &sys, tx, id).await?;
     let (name, email, link, subject) = match (who.ctx, who.link) {
         (Some(ctx), _) if access::may_present(ctx, &doc) => {
             let name = if ctx.full_name.trim().is_empty() { ctx.email.clone() } else { ctx.full_name.clone() };
             (name, Some(ctx.email.clone()), None, format!("u:{}", ctx.user))
         }
         (_, Some(secret)) => {
-            let Some(link) = links::find(&mut tx, tenant, id, "Presenter", secret).await? else { return Err(gone()) };
+            let Some(link) = links::find(tx, tenant, id, "Presenter", secret).await? else { return Err(gone()) };
             let subject = format!("l:{}", link.id);
             (link.presenter_name.clone().unwrap_or_default(), link.presenter_email.clone(), Some(link), subject)
         }
@@ -213,19 +225,18 @@ pub async fn present(k: &Kernel, relay: &dyn Relay, tenant: Uuid, id: Uuid, who:
         // One start a link: the first takes it; after that it renews while Live, and starts nothing.
         match (renew, link.used_at.is_some()) {
             (false, false) => {
-                links::take(&mut tx, tenant, link.id).await?;
+                links::take(tx, tenant, link.id).await?;
             }
             (false, true) => return Err(Error::Conflict("this link has started its broadcast already: renew instead".into())),
             (true, false) => return Err(Error::Conflict("this link has not started the broadcast".into())),
             (true, true) => {}
         }
     }
-    broadcast::go_live(k, &sys, &mut tx, &doc, (&name, email.as_deref())).await?;
-    sqlx::query("update e_broadcast set last_publish_at = now() where tenant_id = $1 and id = $2").bind(tenant).bind(id).execute(&mut *tx).await?;
+    broadcast::go_live(k, &sys, tx, &doc, (&name, email.as_deref())).await?;
+    sqlx::query("update e_broadcast set last_publish_at = now() where tenant_id = $1 and id = $2").bind(tenant).bind(id).execute(&mut **tx).await?;
     let mut out = offer(relay, &set, tenant, id, Access::Publish, relay_key.as_deref().map(|k| k.as_slice()), subject)?;
     out["recording"] = json!(set.recording(&doc));
     out["status"] = json!("Live");
-    tx.commit().await?;
     Ok(out)
 }
 

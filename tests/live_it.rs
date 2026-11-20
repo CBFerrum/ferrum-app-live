@@ -714,6 +714,28 @@ async fn scenario() {
     expect(&mut wrong, "the broadcast ended: nothing connects", no(&t.auth(&acme, ask("connect", &by_mira)).await));
     assert!(wrong.is_empty(), "rules that do not hold: {wrong:#?}");
 
+    // ───────────── presenting and watching as operations, for signed-in people and their agents ─────────────
+    let gated = t.broadcast(&asha, json!({"title": "Through the gate", "audience": "Members"})).await;
+    let op = |name: &str, key: &str| {
+        ferrum_kernel::capability::Invocation::new(format!("live.broadcast.{name}"), json!({"id": gated.to_string(), "params": {}})).key(key)
+    };
+    assert!(k.invoke(&ravi, op("present", "gate-1")).await.is_err(), "not his broadcast");
+    assert!(k.invoke(&mira, op("present", "gate-2")).await.is_err(), "a manager who is not a presenter does not present");
+    let started = k.invoke(&asha, op("present", "gate-3")).await.unwrap();
+    assert_eq!(started.result["status"], "Live");
+    assert!(started.result["token"].as_str().unwrap().ends_with(&format!(".u:{}", asha.user)), "{:?}", started.result);
+    assert_eq!(t.get(&asha, gated).await["status"], "Live");
+    // The pass is given once: a repeat under the same key does not hand it out again.
+    let again = k.invoke(&asha, op("present", "gate-3")).await.unwrap();
+    assert!(again.repeated && again.result.get("token").is_none() && again.answered_once.is_some(), "{again:?}");
+    let seat = k.invoke(&mira, op("watch", "gate-4")).await.unwrap();
+    assert!(seat.result["token"].as_str().unwrap().contains(&format!(".u:{}:", mira.user)), "{:?}", seat.result);
+    assert!(t.auth(&acme, json!({"event": "connect", "path": seat.result["path"], "token": seat.result["token"]})).await.is_ok());
+    assert!(k.invoke(&nobody, op("watch", "gate-5")).await.is_err(), "no right to read it, no seat");
+    k.run_action(&asha, "Broadcast", gated, "end", Value::Null).await.unwrap();
+    let over = k.invoke(&mira, op("watch", "gate-6")).await.unwrap();
+    assert_eq!((over.result["status"].as_str(), over.result.get("token")), (Some("Ended"), None));
+
     // ───────────── keys in the vault (src/keys.rs) ─────────────
     let scope = ferrum_kernel::vault::Scope::Workspace(acme.id);
     // The relay's key has one home: Live's secret in the vault, the key as it was given (what the relay's key directory

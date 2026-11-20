@@ -119,6 +119,27 @@
         returns: {type: object, properties: {link: {type: string, format: uuid, x-ferrum-link: BroadcastLink}, secret: {type: string}, url: {type: [string, "null"]}, expires_at: {type: string, format: date-time}}}
         completion: "A presenter link exists that can start the broadcast once, until it expires or is revoked; only its secret's hash is kept"
         answer_once: {fields: [secret, url], then: "Make another presenter link, and revoke the first if it may have been seen"}
+    # The two moves of the routes (presenting, watching) as operations for signed-in people and their agents: hidden
+    # from the record's screen (the presenter and watch pages call the routes), the same rules and seats.
+    - name: present
+      label: Present
+      permission: read
+      hidden: true
+      condition: "doc.status == 'Scheduled' || doc.status == 'Live'"
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {status: {type: string}, path: {type: string}, url: {type: string}, token: {type: string}, expires_at: {type: string, format: date-time}, recording: {type: boolean}}}
+        completion: "The caller may present it and the broadcast is Live (broadcast_started follows the commit the first time); the answer holds a pass to publish to its path for three minutes"
+        answer_once: {fields: [token, url], then: "Present again for a new pass"}
+    - name: watch
+      label: Watch
+      permission: read
+      hidden: true
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {status: {type: [string, "null"]}, text: {type: string}, path: {type: string}, url: {type: string}, token: {type: string}, expires_at: {type: string, format: date-time}}}
+        completion: "While the broadcast is Live the caller holds a seat and the answer a pass to watch it for three minutes; otherwise the answer is its state in the workspace's words; a full broadcast is refused"
+        answer_once: {fields: [token, url], then: "Watch again for a new pass"}
     - name: revoke_links
       label: Revoke All Links
       permission: write
