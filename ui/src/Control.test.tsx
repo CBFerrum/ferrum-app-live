@@ -146,7 +146,7 @@ describe("the control page", () => {
     // The presenter switches what they send to a screen and back, on the same element, without a new start.
     await press(page.button("Share your screen"));
     expect(el?.getAttribute("source")).toBe("screen");
-    expect(page.button("Share your screen").getAttribute("aria-pressed")).toBe("true");
+    expect(page.button("Share your screen")!.getAttribute("aria-pressed")).toBe("true");
     await press(page.button("Camera"));
     expect(el?.getAttribute("source")).toBe("camera");
     expect(server.count("POST /api/app/live/broadcasts/b1/publish")).toBe(1);
