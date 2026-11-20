@@ -31,6 +31,10 @@
       confirm: "Tokens signed with the new key work only where the relay's key directory holds it. Add the new key file there first; keep the old one until its tokens expire. Continue?"
       params:
         - {name: key, type: text, label: Key, required: true, secret: true, description: "The key as a JWK: the output of moq auth generate (HS256, with a kid)"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {key_id: {type: string}}}
+        completion: "New passes are signed with this key, kept in the vault alone; the key before it answers only for sessions already open, and Signing Key Id shows the new key's name"
 
 - name: BroadcastPublisher
   label: Presenter
@@ -73,8 +77,23 @@
     - {name: replay_cleared_at, type: datetime, read_only: true, no_copy: true, description: "When upkeep cleared the replay link after the retention days; delete the objects it pointed to"}
   indexes: [[status, planned_start], [reference_entity, reference_id]]
   actions:
-    - {name: end, label: End Broadcast, permission: write, condition: "doc.status == 'Live'", confirm: "Viewers lose the stream when their tokens run out. End it?"}
-    - {name: call_off, label: Cancel Broadcast, permission: write, condition: "doc.status == 'Scheduled'"}
+    - name: end
+      label: End Broadcast
+      permission: write
+      condition: "doc.status == 'Live'"
+      confirm: "Viewers and the presenter lose the stream within half a minute. End it?"
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {status: {type: string, const: Ended}}}
+        completion: "The broadcast is Ended, its seats are gone and the relay's next question about any of its sessions is refused; a recorded one has its replay link; broadcast_ended follows the commit"
+    - name: call_off
+      label: Cancel Broadcast
+      permission: write
+      condition: "doc.status == 'Scheduled'"
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {status: {type: string, const: Cancelled}}}
+        completion: "The broadcast is Cancelled and can no longer start; broadcast_ended follows the commit"
     - name: issue_viewer_link
       label: Make a Viewing Link
       permission: write
@@ -82,6 +101,11 @@
       params:
         - {name: label, type: data, label: For, description: "Who or what it is for, to find it again"}
         - {name: days, type: int, label: Valid For (Days), description: "Default 7, at most 90"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {link: {type: string, format: uuid, x-ferrum-link: BroadcastLink}, secret: {type: string}, url: {type: [string, "null"]}, expires_at: {type: string, format: date-time}}}
+        completion: "A viewing link exists until it expires or is revoked; only its secret's hash is kept"
+        answer_once: {fields: [secret, url], then: "Make another viewing link, and revoke the first if it may have been seen"}
     - name: issue_publisher_link
       label: Make a Presenter Link
       permission: write
@@ -90,7 +114,19 @@
         - {name: presenter_name, type: data, label: Presenter, required: true}
         - {name: presenter_email, type: email, label: Presenter Address}
         - {name: days, type: int, label: Valid For (Days), description: "Default 7, at most 90"}
-    - {name: revoke_links, label: Revoke All Links, permission: write, confirm: "Every viewing and presenter link of this broadcast stops working, and nobody can renew with them. Continue?"}
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {link: {type: string, format: uuid, x-ferrum-link: BroadcastLink}, secret: {type: string}, url: {type: [string, "null"]}, expires_at: {type: string, format: date-time}}}
+        completion: "A presenter link exists that can start the broadcast once, until it expires or is revoked; only its secret's hash is kept"
+        answer_once: {fields: [secret, url], then: "Make another presenter link, and revoke the first if it may have been seen"}
+    - name: revoke_links
+      label: Revoke All Links
+      permission: write
+      confirm: "Every viewing and presenter link of this broadcast stops working, and sessions opened with them stop within half a minute. Continue?"
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {revoked: {type: integer}}}
+        completion: "Every link of the broadcast is revoked: none renews, and the relay's next question about a session opened with one is refused"
   form:
     - {label: Broadcast, fields: [title, status, description, planned_start, planned_end]}
     - {label: About, fields: [reference_entity, reference_id]}
@@ -118,5 +154,13 @@
     - {name: owner_email, type: email, read_only: true, no_copy: true}
   indexes: [[token_hash]]
   actions:
-    - {name: revoke, label: Revoke, permission: write, condition: "isEmpty(doc.revoked_at)", confirm: "The link stops working and nobody can renew with it. Revoke it?"}
+    - name: revoke
+      label: Revoke
+      permission: write
+      condition: "isEmpty(doc.revoked_at)"
+      confirm: "The link stops working, and a session opened with it stops within half a minute. Revoke it?"
+      contract:
+        effect: transactional_action
+        returns: {type: object, properties: {revoked: {type: integer}}}
+        completion: "The link is revoked: it renews nothing, and the relay's next question about a session opened with it is refused"
   list: {columns: [broadcast, kind, label, expires_at, revoked_at], sort: created_at desc}
