@@ -12,7 +12,12 @@ use uuid::Uuid;
 pub async fn run(k: &Kernel, tenant: Uuid) -> Result<()> {
     let ctx = Ctx::system(tenant, k.registry.schema(tenant).await?);
     let mut first_error = None;
-    for (step, outcome) in [("silent", end_silent(k, &ctx).await), ("seats", forget_seats(k, &ctx).await), ("retention", retain(k, &ctx).await)] {
+    for (step, outcome) in [
+        ("audience", count_minute(k, &ctx).await),
+        ("silent", end_silent(k, &ctx).await),
+        ("seats", forget_seats(k, &ctx).await),
+        ("retention", retain(k, &ctx).await),
+    ] {
         match outcome {
             Ok(0) => {}
             Ok(n) => tracing::info!(%tenant, step, n, "live maintenance"),
@@ -23,6 +28,27 @@ pub async fn run(k: &Kernel, tenant: Uuid) -> Result<()> {
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+/// This minute's audience of each Live broadcast: the seats live now. Run again within the minute, the larger count
+/// stays, so a minute holds the most seats seen in it.
+async fn count_minute(k: &Kernel, ctx: &Ctx) -> Result<usize> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let window = settings::load(k, ctx, &mut tx).await?.watch_minutes() * 60 + 90;
+    let n = sqlx::query(
+        "insert into live_audience_minute (tenant_id, broadcast, minute, viewers) \
+         select b.tenant_id, b.id, date_trunc('minute', now()), \
+           (select count(*) from live_seat s where s.tenant_id = b.tenant_id and s.broadcast = b.id and s.seen_at > now() - make_interval(secs => $2::float8)) \
+         from e_broadcast b where b.tenant_id = $1 and b.status = 'Live' \
+         on conflict (tenant_id, broadcast, minute) do update set viewers = greatest(live_audience_minute.viewers, excluded.viewers)",
+    )
+    .bind(ctx.tenant)
+    .bind(window as f64)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(n as usize)
 }
 
 /// Live broadcasts whose presenter's last token ran out a minute ago: ended.

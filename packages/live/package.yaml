@@ -9,7 +9,7 @@ modules:
     label: Live
     icon: video
     order: 48
-    items: [Broadcast, BroadcastLink, LiveSettings, report:live_broadcasts, report:live_audience]
+    items: [Broadcast, BroadcastLink, LiveSettings, report:live_broadcasts, report:live_audience, report:live_audience_curve]
 
 roles:
   - name: Live User

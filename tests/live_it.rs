@@ -632,7 +632,7 @@ async fn scenario() {
     // ───────────── reports ─────────────
     let source = ferrum_app_live::reports().remove(0);
     let names: Vec<String> = source.catalog().iter().map(|e| e["name"].as_str().unwrap().to_string()).collect();
-    assert_eq!(names, ["live_broadcasts", "live_audience"]);
+    assert_eq!(names, ["live_broadcasts", "live_audience", "live_audience_curve"]);
     let rows = source.run(&k, &mira, "live_broadcasts", &HashMap::new()).await.unwrap();
     let all = rows["rows"].as_array().unwrap();
     let webinar = all.iter().find(|r| r["title"] == "Webinar").expect("the webinar");
@@ -641,6 +641,20 @@ async fn scenario() {
     let by_status = source.run(&k, &mira, "live_audience", &HashMap::new()).await.unwrap();
     let ended_row = by_status["rows"].as_array().unwrap().iter().find(|r| r["status"] == "Ended").unwrap();
     assert!(ended_row["broadcasts"].as_i64().unwrap() >= 2);
+    // The audience minute by minute: upkeep counts the live seats of each Live broadcast once a minute (a second round in
+    // the same minute keeps the larger count); nobody types it. Its sum is the viewer-minutes.
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
+    let of = |id: Uuid| HashMap::from([("broadcast".to_string(), id.to_string())]);
+    let curve = source.run(&k, &mira, "live_audience_curve", &of(live)).await.unwrap();
+    let minutes = curve["rows"].as_array().unwrap();
+    // (Two rounds may fall either side of a minute's turn: one or two minutes, each of the two live seats.)
+    assert!((1..=2).contains(&minutes.len()) && minutes.iter().all(|m| m["viewers"] == 2), "{curve}");
+    assert_eq!(curve["totals"]["viewer_minutes"].as_i64(), Some(2 * minutes.len() as i64));
+    assert_eq!(t.scalar::<i64>(&acme, "select count(*) from live_audience_minute where tenant_id = $1 and broadcast = $2", live).await, minutes.len() as i64);
+    // Someone who may not read the broadcast gets no minutes of it.
+    assert!(source.run(&k, &ravi, "live_audience_curve", &of(live)).await.unwrap()["rows"].as_array().unwrap().is_empty());
+    refused(source.run(&k, &mira, "live_audience_curve", &HashMap::new()).await, "invalid");
     // Someone who may read only their own broadcasts sees only theirs.
     let ravi_rows = source.run(&k, &ravi, "live_broadcasts", &HashMap::new()).await.unwrap();
     assert!(ravi_rows["rows"].as_array().unwrap().iter().all(|r| r["title"] != "Webinar"));
