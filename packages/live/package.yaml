@@ -1,5 +1,5 @@
 package: live
-version: 0.1.0
+version: 0.1.1
 label: Live
 description: One-to-many live video at low delay through a Media over QUIC relay - broadcasts attached to any record, short-lived signed access for presenters and viewers, a page and an embed for other apps, viewer counts without names on the relay.
 depends: [core]

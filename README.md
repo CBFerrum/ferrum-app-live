@@ -7,7 +7,7 @@
 
 <br>
 
-[![Version](https://img.shields.io/badge/version-0.4.0-be123c?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-be123c?style=flat-square)](CHANGELOG.md)
 [![Licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Ferrum platform](https://img.shields.io/badge/runs%20on-Ferrum-2f5bea?style=flat-square)](https://github.com/CBFerrum/Ferrum)
 ![Rust](https://img.shields.io/badge/Rust-server-b7410e?style=flat-square&logo=rust)
@@ -33,7 +33,7 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 - 🔗 **About any record.** A broadcast can be about a lesson, a product or a calendar event, and who may watch follows who can read that record.
 - 🪜 **A simple audience ladder.** Members, Portal, Link or Public, each including the ones before it.
 - 🎟️ **Seats that count without names.** Capacity is enforced atomically, and viewers now and the peak come from keyed hashes, never names.
-- 🔑 **Short-lived access.** A token is for one broadcast path, with one right and an expiry, and is re-decided on every renewal.
+- 🔑 **Short-lived passes, checked while they last.** A pass is for one person, link or seat, one broadcast path and one right, and lets its holder connect for three minutes. Live is the relay's auth server: it re-decides the holder's right when the session opens and every 30 seconds after, so an ended broadcast, a revoked link or a lost right stops the session within half a minute.
 - 🧩 **Embeddable.** An embed description lets other apps show a broadcast beside their own content, in a frame only the origins you name can use.
 - 🔓 **Open source, self-hosted.** AGPL, with your own relay and no per-viewer fee.
 
@@ -41,7 +41,7 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 
 | | |
 |---|---|
-| 📦 Version | `0.4.0` |
+| 📦 Version | `0.5.0` |
 | 🧱 Kind | Own interface at `/live/`, plus the app's own pages for people with no account |
 | 🗃️ What it adds | 4 entities in the `live` package: Broadcast, Presenter (child), Broadcast Link, Live Settings |
 | 👥 Roles | 2: Live User, Live Manager |
@@ -140,8 +140,8 @@ Ferrum Live runs one-to-many live video through a [Media over QUIC](https://gith
 ### 🔑 Access and keys
 
 - **One interface to the relay.** `src/relay.rs` is the only place that knows the relay. A token is for exactly this broadcast's path, with one right and an expiry (10 minutes for viewers and 60 for presenters by default), and nothing else, since moq refuses a claim it does not know.
-- **Re-decided each time.** Renewal re-decides every right from scratch, so a person who loses the right is stopped at their next renewal, and a revoked link or an ended broadcast cannot renew.
-- **Signing key.** An HS256 key (a JWK from `moq auth generate`) set with **Set Signing Key**, kept in the platform's vault as the relay's key directory holds it, and never shown. A key named as the one in use but with another secret is refused. Rotate without dropping anyone by adding a new key file, under a new name, beside the old one, then setting the new key.
+- **Re-decided each time.** Renewal and the relay's every question (at the start and every 30 seconds) re-decide the right from scratch: a person who loses the right, a presenter taken off, a revoked link, a seat given up or an ended broadcast is refused the next question.
+- **Signing key.** An HS256 key (a JWK from `moq auth generate`) set with **Set Signing Key**, kept in the platform's vault alone (the relay holds no key: it asks Live), and never shown. A key named as the one in use but with another secret is refused. Setting a new key drops nobody: sessions admitted under the one before are still answered under it, and nothing new opens with it.
 - **Personal data.** A presenter's name and address, on a broadcast or a link, are found by address and blanked on erasure. Seats hold none.
 
 ### 🧩 Embedding in other apps
@@ -179,11 +179,11 @@ flowchart LR
     LV["Live app in Ferrum"] -- "signs short-lived tokens" --> PR
     LV -- "signs short-lived tokens" --> VW["Viewers' browsers"]
     VW -- "watch: signed token" --> RL
-    RL -- "asks who may do what" --> AU["moq auth server"]
+    RL -- "asks at the start and every 30 s" --> LV
     LV -- "seats and counts" --> DB[("PostgreSQL")]
 ```
 
-Live decides who may present or watch, and signs a token for exactly one broadcast's path. The relay carries sound and pictures; Ferrum never sees them. A relay with `--auth-url` asks the auth server, which verifies the token against the key files Live and it share.
+Live decides who may present or watch, and signs a token for exactly one broadcast's path. The relay carries sound and pictures; Ferrum never sees them. The relay's `--auth-url` is Live: it verifies the pass and the holder's right when a session opens and every 30 seconds while it lasts.
 
 ```mermaid
 flowchart TD
@@ -238,11 +238,11 @@ The leaders are streaming and webinar products: YouTube Live, Vimeo Livestream, 
 | Embed in your own site or app | ✅ | 🟡 | ✅ | 🟡 | 🟡 | ✅ |
 | Embed only on named origins | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | Registration, reminders and follow-up | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Chat, Q&A and polls | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Chat, Q&A and polls | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Hosted recording and replay | ❌ | ✅ | ✅ | ✅ | ✅ | 🟡 |
 | Closed captions | 🟡 | ✅ | ✅ | ✅ | 🟡 | ❌ |
 | Audience counts (now, peak, total) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Detailed analytics | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Detailed analytics | 🟡 | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Tickets, memberships or paywall | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Seats counted without names | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
 | Mobile apps | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -250,7 +250,7 @@ The leaders are streaming and webinar products: YouTube Live, Vimeo Livestream, 
 | Open source | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Self-hosted | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
-Notes: 🟡 for Ferrum on low delay and the presenter studio means they are built and tested against fakes, not yet against a real relay or a browser with a camera; the studio is camera and microphone with a device check, with no layouts or other sources. 🟡 for captions means the player shows what the broadcast's catalogue offers; Live makes none. 🟡 for leaders usually means a paid tier or a limited form. Owncast's delay is that of HLS.
+Notes: 🟡 for Ferrum on low delay and the presenter studio means they are built and tested against fakes, not yet against a real relay or a browser with a camera; the studio is camera and microphone with a device check and a switch to a shared screen while on air, with no layouts or overlays. 🟡 for Q&A and polls: moderated questions and one-vote-a-seat polls on the shell's watch page and the presenter page; no open chat, and not yet on the public page. 🟡 for analytics: viewers now, the peak, different viewers and the audience minute by minute with viewer-minutes; no geography, device or referrer (seats keep no such thing, by design). 🟡 for captions means the player shows what the broadcast's catalogue offers; Live makes none. 🟡 for leaders usually means a paid tier or a limited form. Owncast's delay is that of HLS.
 
 ### 🏆 Where Live stands out
 
@@ -274,6 +274,7 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 ### ✅ Recently shipped
 
+- [x] **0.5.0** Live is the relay's auth server: three-minute passes that name their holder, rights re-checked every 30 seconds.
 - [x] **0.4.0** Upkeep runs one workspace at a time, on whichever replica is free; needs Ferrum 0.4.0.
 - [x] **0.3.1** The `LivePlayer` component, which no app used, is not offered; the embed description is.
 - [x] **0.3.0** The relay's key lives in the vault alone, and seats are hashed with the vault's key alone.
@@ -285,7 +286,7 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 ### 🔜 Next up
 
-- [ ] **Run it against a real relay.** Confirm that `moq auth serve` accepts the tokens signed here, that a relay with `--auth-url` admits a session at `{relay}/{path}?jwt=…`, the WebSocket fallback, and key rotation with two key files.
+- [ ] **Run it against a real relay.** Confirm that a relay with `--auth-url` set to Live's `/relay/auth` sends the question as docs/moq.md reads it, admits a session at `{relay}/{path}?jwt=…`, honours `revalidate` and a later `expires` in a revalidation's answer, and the WebSocket fallback.
 - [ ] **Run the players in a browser with a camera.** That the bundled elements register and play under the shell's policy, that `<moq-publish>` takes the camera and microphone chosen, and the captions picker.
 - [ ] **Sign in through a real portal.** Portal people were simulated, not signed in through a portal.
 - [ ] **List Live in the platform's apps and server build,** so it installs from the store (docs/deploy.md says what the platform would add).
@@ -295,12 +296,12 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 **Presenting and ingest**
 - [ ] Wire moq's RTMP, SRT and WebRTC gateways, so an encoder such as OBS can feed a broadcast.
-- [ ] Screen sharing and layouts in the presenter studio.
+- [ ] Layouts, overlays and a second presenter on stage in the presenter studio (screen sharing is in 0.5.0).
 
 **Audience**
 - [ ] Chat, Q&A and polls.
 - [ ] Registration with reminders and follow-up.
-- [ ] Watch time and geography analytics.
+- [ ] Geography and device analytics (the audience minute by minute and viewer-minutes are in 0.5.0).
 - [ ] Tickets or a paywall.
 
 **Product**
@@ -315,7 +316,7 @@ Notes: 🟡 for Ferrum on low delay and the presenter studio means they are buil
 
 Install the app from a Ferrum store, or by listing it in the server's build (docs/deploy.md, "What the platform would add"). Then:
 
-1. Run the relay beside Ferrum (docs/deploy.md): `moq-relay` 0.17.16 and its auth server, with a publicly trusted certificate for its name (browsers do not accept a self-signed one for WebTransport unless pinned), UDP buffers raised on the host, and a key file `keys/<kid>.jwk` made with `moq auth generate`.
+1. Run the relay beside Ferrum (docs/deploy.md): `moq-relay` 0.17.16 with Live as its auth server, with a publicly trusted certificate for its name (browsers do not accept a self-signed one for WebTransport unless pinned), UDP buffers raised on the host, and a key made with `moq auth generate`, given to Set Signing Key.
 2. In **Live Settings**, give the relay address and health address, then **Set Signing Key** with the same key text.
 3. Set the same address under the app's settings (*Relay address for browsers*), so the interface inside Ferrum may connect there.
 4. Give people **Live User** to plan and present, and **Live Manager** for settings and every broadcast.
@@ -325,7 +326,7 @@ Compose and Kubernetes files are in `deploy/` (`live.yml`, `live/relay.toml`, `k
 
 ### What was not run against a real relay
 
-Every path to moq. The suite runs the fake behind `Relay`. Untested against the real thing: that `moq auth serve` accepts the tokens this app signs (only the signature scheme is checked, against a token moq's own JavaScript library signed); that a relay with `--auth-url` admits a session dialed at `{relay}/{path}?jwt=…`; the player and capture elements on these pages (including that the pinned script loads under the page's policy and that a changed `url` attribute reconnects); the WebSocket fallback; key rotation with two key files; the compose overlay and manifest; the relay's `/health` as the doctor asks it; that the platform lets a page set its own `Content-Security-Policy` on `/api/site/…`; and that the page, opened under `/api/app/live/…`, is identified as the signed-in person.
+Every path to moq. The suite runs the fake behind `Relay`. Untested against the real thing: that the relay asks Live's `/relay/auth` in the shape docs/moq.md gives and acts on its answers (only the signature scheme is checked, against a token moq's own JavaScript library signed); that a relay with `--auth-url` admits a session dialed at `{relay}/{path}?jwt=…`; the player and capture elements on these pages (including that the pinned script loads under the page's policy and that a changed `url` attribute reconnects); the WebSocket fallback; the compose overlay and manifest; the relay's `/health` as the doctor asks it; that the platform lets a page set its own `Content-Security-Policy` on `/api/site/…`; and that the page, opened under `/api/app/live/…`, is identified as the signed-in person.
 
 For the interface, no relay, no browser with a camera and no server were used: the two moq elements registering and playing under the shell's policy; `<moq-publish>` taking the chosen camera and microphone; the connection status reporting a drop; the Opus fallback; the captions picker; full screen and the keys; and the shell serving `/live/` from `ui/dist`. The tests fake the components, the relay and every route, at `fetch`.
 

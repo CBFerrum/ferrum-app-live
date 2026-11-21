@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.0
+
+Needs the same platform as 0.4.0. Database: two tables (`live_audience_minute`, `live_poll_vote`) and two entities (`BroadcastQuestion`, `BroadcastPoll`); package `live` 0.1.1. Deploy files change: the relay's auth server is Live.
+
+**A pass stops working when the right does.** A pass is for one holder (`sub`: a person, a link, or a viewer's seat),
+one broadcast's path and one right, and lets its holder connect for three minutes; the session it opens lasts the
+token minutes in Live Settings, as before. The relay's `--auth-url` is now Live's public route `POST /relay/auth`: at
+`connect` Live checks the signature, the expiry and the path, and at `connect` and every `revalidate` (30 seconds) that
+the broadcast is Live and the holder still may present or watch (the same rules as renewal) with a live seat. Before,
+`moq auth serve` admitted a pass until its expiry (up to 12 hours for a presenter) after the broadcast ended or the
+right was gone. `moq auth serve` and the relay's key files are gone from the deploy files: the key lives in the vault
+alone. Set Signing Key keeps the key before it, so sessions admitted under it go on; nothing new opens with it.
+
+**Presenting and watching as operations.** `Broadcast.present` and `Broadcast.watch` (hidden from the record's screen)
+do for a signed-in person, or their agent through the gate, what the presenter and watch pages do: the same rules,
+seats and passes, the pass given once. Every action now has a contract.
+
+**Screen sharing.** On air, a presenter switches what they send between the camera and a shared screen, on the same
+stream.
+
+**The audience minute by minute.** Upkeep counts each Live broadcast's live seats once a minute
+(`live_audience_minute`, new table: no name, a number); the report *Audience Minute by Minute* gives them and the
+viewer-minutes, to those who may read the broadcast.
+
+**Questions and polls.** Viewers ask (one question every 20 seconds and five waiting at most, a seat) and vote (once a
+seat in a poll) with the seat they watch from (`BroadcastQuestion`, `BroadcastPoll`, new entities; `live_poll_vote`,
+new table holding a seat's keyed hash, no name). Presenters and managers list, show, answer and hide questions and
+open and close polls with the broadcast's actions (`questions`, `moderate_question`, `open_poll`, `close_poll`), on the
+presenter page while on air. Viewers see only shown and answered questions. They go with the links after the
+retention days. The shell's watch page has them; the public page (`/api/site/…/watch`) does not yet.
+
+**Erasing a presenter takes their recording's replay link.** The objects the link pointed to are the recorder's.
+
 ## 0.4.0
 
 Needs Ferrum 0.4.0 (apps' upkeep runs one workspace at a time, on whichever replica is free). No database or interface change.
