@@ -1,5 +1,5 @@
 package: live
-version: 0.1.0
+version: 0.1.1
 label: Live
 description: One-to-many live video at low delay through a Media over QUIC relay - broadcasts attached to any record, short-lived signed access for presenters and viewers, a page and an embed for other apps, viewer counts without names on the relay.
 depends: [core]
@@ -9,7 +9,7 @@ modules:
     label: Live
     icon: video
     order: 48
-    items: [Broadcast, BroadcastLink, LiveSettings, report:live_broadcasts, report:live_audience]
+    items: [Broadcast, BroadcastLink, BroadcastQuestion, BroadcastPoll, LiveSettings, report:live_broadcasts, report:live_audience, report:live_audience_curve]
 
 roles:
   - name: Live User
@@ -23,12 +23,15 @@ roles:
     permissions:
       - {entity: Broadcast, read: true, write: true, create: true, delete: true, export: true}
       - {entity: BroadcastLink, read: true, write: true, create: true, delete: true, export: true}
+      - {entity: BroadcastQuestion, read: true, export: true}
+      - {entity: BroadcastPoll, read: true, export: true}
       - {entity: LiveSettings, read: true, write: true, create: true}
 
 # A presenter named on a broadcast or on a one-time link is a person: found by address, blanked on erasure.
 # What viewers leave (counts) holds no name and no address, only keyed seats that upkeep deletes.
 personal_data:
-  - {entity: Broadcast, match: presenter_email, erase: [presenter_name, presenter_email]}
+  # The recording shows its presenter: erasing them takes its replay link too (the objects are the recorder's; see README).
+  - {entity: Broadcast, match: presenter_email, erase: [presenter_name, presenter_email, replay_url]}
   - {entity: Broadcast, match: publishers.email, erase: [publishers]}
   - {entity: BroadcastLink, match: presenter_email, erase: [presenter_name, presenter_email, label]}
 handover:

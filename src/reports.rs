@@ -53,6 +53,28 @@ async fn list(k: &Kernel, ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Valu
     }))
 }
 
+/// One broadcast's audience minute by minute (upkeep's counts of live seats), and its viewer-minutes; a broadcast the
+/// caller may not read has no rows.
+async fn curve(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
+    let id = p.uuid("broadcast")?.ok_or_else(|| Error::field("broadcast", "the broadcast"))?;
+    let ent = ctx.schema.entity("Broadcast").ok_or_else(|| Error::NotFound("Broadcast".into()))?;
+    let scope = row_scope(ctx, ent, Action::Read)?;
+    let mut qb = QueryBuilder::new(
+        "select m.minute, m.viewers::bigint from live_audience_minute m join e_broadcast a on a.tenant_id = m.tenant_id and a.id = m.broadcast where m.tenant_id = ",
+    );
+    qb.push_bind(ctx.tenant).push(" and a.id = ").push_bind(id);
+    scope.push_sql(&mut qb, "a");
+    qb.push(" order by m.minute limit 10000");
+    let data: Vec<(DateTime<Utc>, i64)> = qb.build_query_as().fetch_all(&mut **tx).await?;
+    let minutes: i64 = data.iter().map(|(_, v)| v).sum();
+    let rows: Vec<Value> = data.into_iter().map(|(minute, viewers)| json!({"minute": minute, "viewers": viewers})).collect();
+    Ok(json!({
+        "columns": [col("minute", "Minute", "datetime"), col("viewers", "Viewers", "int")],
+        "rows": rows,
+        "totals": {"viewer_minutes": minutes},
+    }))
+}
+
 async fn audience(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
     let mut qb = broadcasts(ctx, "a.status, count(*), coalesce(sum(a.viewers_total), 0)::bigint, coalesce(max(a.viewers_peak), 0)::bigint", span(ctx, p)?)?;
     qb.push(" group by 1");
@@ -77,7 +99,9 @@ async fn audience(ctx: &Ctx, p: &Params<'_>, tx: &mut Tx) -> Result<Value> {
 impl ReportSource for LiveReports {
     fn catalog(&self) -> Vec<Value> {
         let entry = |name: &str, label: &str| json!({"name": name, "label": label, "module": "live", "entity": "Broadcast", "params": [param_def("from_date"), param_def("to_date")]});
-        vec![entry("live_broadcasts", "Broadcasts and Their Audience"), entry("live_audience", "Audience by Status")]
+        let curve = json!({"name": "live_audience_curve", "label": "Audience Minute by Minute", "module": "live", "entity": "Broadcast",
+            "params": [{"name": "broadcast", "label": "Broadcast", "type": "link", "to": "Broadcast", "required": true}]});
+        vec![entry("live_broadcasts", "Broadcasts and Their Audience"), entry("live_audience", "Audience by Status"), curve]
     }
 
     async fn run(&self, k: &Kernel, ctx: &Ctx, name: &str, params: &HashMap<String, String>) -> Result<Value> {
@@ -86,6 +110,7 @@ impl ReportSource for LiveReports {
         let out = match name {
             "live_broadcasts" => list(k, ctx, &p, &mut tx).await,
             "live_audience" => audience(ctx, &p, &mut tx).await,
+            "live_audience_curve" => curve(ctx, &p, &mut tx).await,
             _ => Err(Error::NotFound(format!("report {name}"))),
         };
         tx.rollback().await?;

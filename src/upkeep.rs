@@ -12,7 +12,12 @@ use uuid::Uuid;
 pub async fn run(k: &Kernel, tenant: Uuid) -> Result<()> {
     let ctx = Ctx::system(tenant, k.registry.schema(tenant).await?);
     let mut first_error = None;
-    for (step, outcome) in [("silent", end_silent(k, &ctx).await), ("seats", forget_seats(k, &ctx).await), ("retention", retain(k, &ctx).await)] {
+    for (step, outcome) in [
+        ("audience", count_minute(k, &ctx).await),
+        ("silent", end_silent(k, &ctx).await),
+        ("seats", forget_seats(k, &ctx).await),
+        ("retention", retain(k, &ctx).await),
+    ] {
         match outcome {
             Ok(0) => {}
             Ok(n) => tracing::info!(%tenant, step, n, "live maintenance"),
@@ -23,6 +28,27 @@ pub async fn run(k: &Kernel, tenant: Uuid) -> Result<()> {
         }
     }
     first_error.map_or(Ok(()), Err)
+}
+
+/// This minute's audience of each Live broadcast: the seats live now. Run again within the minute, the larger count
+/// stays, so a minute holds the most seats seen in it.
+async fn count_minute(k: &Kernel, ctx: &Ctx) -> Result<usize> {
+    let mut tx = k.db.tenant_tx(ctx.tenant).await?;
+    let window = settings::load(k, ctx, &mut tx).await?.watch_minutes() * 60 + 90;
+    let n = sqlx::query(
+        "insert into live_audience_minute (tenant_id, broadcast, minute, viewers) \
+         select b.tenant_id, b.id, date_trunc('minute', now()), \
+           (select count(*) from live_seat s where s.tenant_id = b.tenant_id and s.broadcast = b.id and s.seen_at > now() - make_interval(secs => $2::float8)) \
+         from e_broadcast b where b.tenant_id = $1 and b.status = 'Live' \
+         on conflict (tenant_id, broadcast, minute) do update set viewers = greatest(live_audience_minute.viewers, excluded.viewers)",
+    )
+    .bind(ctx.tenant)
+    .bind(window as f64)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(n as usize)
 }
 
 /// Live broadcasts whose presenter's last token ran out a minute ago: ended.
@@ -78,7 +104,9 @@ async fn retain(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     let days = settings::load(k, ctx, &mut tx).await?.number("retention_days").max(1);
     let old: Vec<Uuid> = sqlx::query_scalar(
         "select id from e_broadcast where tenant_id = $1 and status in ('Ended', 'Cancelled') and ended_at < now() - make_interval(days => $2::int) \
-         and (replay_url is not null or exists (select 1 from e_broadcast_link l where l.tenant_id = e_broadcast.tenant_id and l.broadcast = e_broadcast.id)) limit 100",
+         and (replay_url is not null or exists (select 1 from e_broadcast_link l where l.tenant_id = e_broadcast.tenant_id and l.broadcast = e_broadcast.id) \
+         or exists (select 1 from e_broadcast_question q where q.tenant_id = e_broadcast.tenant_id and q.broadcast = e_broadcast.id) \
+         or exists (select 1 from e_broadcast_poll p where p.tenant_id = e_broadcast.tenant_id and p.broadcast = e_broadcast.id)) limit 100",
     )
     .bind(ctx.tenant)
     .bind(days as i32)
@@ -87,7 +115,14 @@ async fn retain(k: &Kernel, ctx: &Ctx) -> Result<usize> {
     let mut n = 0;
     for id in old {
         let doc = k.get_tx(ctx, &mut tx, "Broadcast", id, true).await?;
-        sqlx::query("delete from e_broadcast_link where tenant_id = $1 and broadcast = $2").bind(ctx.tenant).bind(id).execute(&mut *tx).await?;
+        // Its links, and what viewers wrote and voted (a poll's votes go with it).
+        for table in ["e_broadcast_link", "e_broadcast_question", "e_broadcast_poll"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!("delete from {table} where tenant_id = $1 and broadcast = $2")))
+                .bind(ctx.tenant)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
         if s(&doc, "replay_url").is_some() {
             let patch = json!({"replay_url": null, "replay_cleared_at": ts(crate::now())});
             k.update_tx(ctx, &mut tx, "Broadcast", doc_id(&doc)?, patch.as_object().cloned().unwrap_or_default(), None).await?;

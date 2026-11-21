@@ -122,6 +122,11 @@ impl T {
         self.call(t, user, "POST", &format!("/broadcasts/{id}/{route}"), Value::Null, body).await
     }
 
+    /// The relay asking Live about a session (`--auth-url`).
+    async fn auth(&self, t: &Tenant, body: Value) -> Result<(u16, Value), Error> {
+        self.call(t, None, "POST", "/relay/auth", Value::Null, body).await
+    }
+
     /// A viewer's first call and its answer's token, as the page makes them.
     async fn watch(&self, t: &Tenant, user: Option<&Ctx>, id: Uuid, body: Value) -> Result<(u16, Value), Error> {
         self.post(t, user, id, "watch", body).await
@@ -149,6 +154,17 @@ impl T {
 
     fn minted(&self) -> Vec<(String, Access, DateTime<Utc>)> {
         self.relay.minted.lock().unwrap().clone()
+    }
+}
+
+fn at(v: &Value) -> DateTime<Utc> {
+    v.as_str().and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map(|d| d.with_timezone(&Utc)).unwrap_or_else(|| panic!("a time: {v}"))
+}
+
+/// Notes a rule that does not hold, so one run shows every one that fails.
+fn expect(wrong: &mut Vec<String>, what: &str, ok: bool) {
+    if !ok {
+        wrong.push(what.to_string());
     }
 }
 
@@ -273,6 +289,18 @@ async fn scenario() {
     };
     assert_eq!(kept, (json!("Scheduled"), json!(0)));
     assert_eq!(t.get(&asha, early).await["status"], "Scheduled");
+    // Viewer counts are derived from seats, never typed: not by a manager either, nor through the gate an agent uses.
+    let typed = json!({"viewers_peak": 50, "viewers_total": 70, "started_at": "2030-01-01T00:00:00Z", "presenter_name": "Someone"});
+    let _ = k.update(&mira, "Broadcast", early, obj(typed.clone()), None).await;
+    let through_gate =
+        k.invoke(&mira, ferrum_kernel::capability::Invocation::new("live.broadcast.update", json!({"id": early, "values": typed})).key("typed-counts-1")).await;
+    assert!(!matches!(through_gate, Err(Error::NotFound(_))), "the gate knows the operation: {through_gate:?}");
+    let b = t.get(&mira, early).await;
+    assert_eq!(
+        (b["viewers_peak"].clone(), b["viewers_total"].clone(), b["started_at"].clone(), b["presenter_name"].clone()),
+        (json!(0), json!(0), Value::Null, Value::Null),
+        "{b:?}"
+    );
 
     // ───────────── presenting ─────────────
     let live = t.broadcast(&asha, json!({"title": "Webinar", "audience": "Public", "capacity": 2, "waiting_text": "Starting at ten"})).await;
@@ -299,7 +327,10 @@ async fn scenario() {
     let minted = t.minted();
     assert_eq!(minted.len(), 1);
     assert_eq!((minted[0].0.as_str(), minted[0].1), (path.as_str(), Access::Publish));
-    assert!((minted[0].2 - (Utc::now() + Duration::minutes(60))).num_seconds().abs() < 30);
+    // A pass lets its holder connect for a few minutes (the lead, 20 Nov: "a pass is for one person, one room, one role
+    // and a few minutes"); the session it opens lasts the presenter's token minutes, and Live is asked again meanwhile.
+    assert!((minted[0].2 - (Utc::now() + Duration::minutes(3))).num_seconds().abs() < 30);
+    assert!((at(&offer["expires_at"]) - (Utc::now() + Duration::minutes(60))).num_seconds().abs() < 30);
     assert_eq!(offer["refresh_in"], 2400, "renewed at two thirds of the life");
     // Renewal: the presenter only, and only while Live.
     t.post(&acme, Some(&asha), live, "publish/refresh", Value::Null).await.unwrap();
@@ -320,7 +351,8 @@ async fn scenario() {
     let watching = t.minted().into_iter().filter(|m| m.1 == Access::Watch).collect::<Vec<_>>();
     assert_eq!(watching.len(), 1);
     assert_eq!(watching[0].0, path, "a viewer's token is for exactly this path");
-    assert!((watching[0].2 - (Utc::now() + Duration::minutes(10))).num_seconds().abs() < 30, "short lived");
+    assert!((watching[0].2 - (Utc::now() + Duration::minutes(3))).num_seconds().abs() < 30, "a few minutes to connect");
+    assert!((at(&a["expires_at"]) - (Utc::now() + Duration::minutes(10))).num_seconds().abs() < 30, "short lived");
     assert_eq!(a["refresh_in"], 400);
     let (_, _b) = t.watch(&acme, None, live, json!({"seat": nonce(2)})).await.unwrap();
     // The third finds no seat (capacity 2): a 503 in the settings' words, nothing minted for it.
@@ -589,9 +621,11 @@ async fn scenario() {
 
     // ───────────── a presenter's name is personal data, found by address and erased ─────────────
     assert_eq!(g["presenter_email"], "pat@outside.test");
+    k.update(&asha, "Broadcast", guest, obj(json!({"replay_url": "https://replays.example.com/again.m3u8"})), None).await.unwrap();
     k.erase_personal_data(&acme.admin, "pat@outside.test", "asked to").await.unwrap();
     let g = t.get(&asha, guest).await;
     assert_eq!((g["presenter_name"].clone(), g["presenter_email"].clone()), (Value::Null, Value::Null), "{g:?}");
+    assert_eq!(g["replay_url"], Value::Null, "the recording of an erased presenter is not offered: {g:?}");
     // …and a person named on a broadcast's presenters.
     let named = t.broadcast(&asha, json!({"title": "Named", "publishers": [{"email": "lee@elsewhere.test", "name": "Lee"}]})).await;
     k.erase_personal_data(&acme.admin, "lee@elsewhere.test", "asked to").await.unwrap();
@@ -600,7 +634,7 @@ async fn scenario() {
     // ───────────── reports ─────────────
     let source = ferrum_app_live::reports().remove(0);
     let names: Vec<String> = source.catalog().iter().map(|e| e["name"].as_str().unwrap().to_string()).collect();
-    assert_eq!(names, ["live_broadcasts", "live_audience"]);
+    assert_eq!(names, ["live_broadcasts", "live_audience", "live_audience_curve"]);
     let rows = source.run(&k, &mira, "live_broadcasts", &HashMap::new()).await.unwrap();
     let all = rows["rows"].as_array().unwrap();
     let webinar = all.iter().find(|r| r["title"] == "Webinar").expect("the webinar");
@@ -609,6 +643,20 @@ async fn scenario() {
     let by_status = source.run(&k, &mira, "live_audience", &HashMap::new()).await.unwrap();
     let ended_row = by_status["rows"].as_array().unwrap().iter().find(|r| r["status"] == "Ended").unwrap();
     assert!(ended_row["broadcasts"].as_i64().unwrap() >= 2);
+    // The audience minute by minute: upkeep counts the live seats of each Live broadcast once a minute (a second round in
+    // the same minute keeps the larger count); nobody types it. Its sum is the viewer-minutes.
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
+    let of = |id: Uuid| HashMap::from([("broadcast".to_string(), id.to_string())]);
+    let curve = source.run(&k, &mira, "live_audience_curve", &of(live)).await.unwrap();
+    let minutes = curve["rows"].as_array().unwrap();
+    // (Two rounds may fall either side of a minute's turn: one or two minutes, each of the two live seats.)
+    assert!((1..=2).contains(&minutes.len()) && minutes.iter().all(|m| m["viewers"] == 2), "{curve}");
+    assert_eq!(curve["totals"]["viewer_minutes"].as_i64(), Some(2 * minutes.len() as i64));
+    assert_eq!(t.scalar::<i64>(&acme, "select count(*) from live_audience_minute where tenant_id = $1 and broadcast = $2", live).await, minutes.len() as i64);
+    // Someone who may not read the broadcast gets no minutes of it.
+    assert!(source.run(&k, &ravi, "live_audience_curve", &of(live)).await.unwrap()["rows"].as_array().unwrap().is_empty());
+    refused(source.run(&k, &mira, "live_audience_curve", &HashMap::new()).await, "invalid");
     // Someone who may read only their own broadcasts sees only theirs.
     let ravi_rows = source.run(&k, &ravi, "live_broadcasts", &HashMap::new()).await.unwrap();
     assert!(ravi_rows["rows"].as_array().unwrap().iter().all(|r| r["title"] != "Webinar"));
@@ -617,6 +665,150 @@ async fn scenario() {
     let other = t.tenant("globex").await;
     refused(t.watch(&other, None, live, json!({"seat": nonce(900)})).await, "not found");
 
+    // ───────────── passes: the relay asks Live when a session opens and every half minute while it lasts ─────────────
+    // A pass is one subject's, for one broadcast's path, one right, and a few minutes to connect. The session stops at the
+    // relay's next question once the broadcast ended or its holder lost the right (Live is the relay's auth server).
+    let ask = |event: &str, offer: &Value| json!({"id": "s1", "event": event, "path": offer["path"], "query": format!("jwt={}", offer["token"].as_str().unwrap()), "transport": "webtransport"});
+    let granted = |r: &Result<(u16, Value), Error>| matches!(r, Ok((200, g)) if g["root"].is_string());
+    let no = |r: &Result<(u16, Value), Error>| matches!(r, Err(Error::Forbidden(_)));
+    let passes = t.broadcast(&asha, json!({"title": "Passes", "audience": "Link", "publishers": [{"email": "ravi@acme.test", "name": "Ravi"}]})).await;
+    let ppath = format!("live/{}/{}", acme.id.simple(), passes.simple());
+    let (_, by_ravi) = t.post(&acme, Some(&ravi), passes, "publish", Value::Null).await.unwrap();
+    let tok = by_ravi["token"].as_str().unwrap().to_string();
+    assert!(tok.ends_with(&format!(".u:{}", ravi.user)), "the pass names its person: {tok}");
+    let last = t.minted().last().cloned().unwrap();
+    assert_eq!((last.0.as_str(), last.1), (ppath.as_str(), Access::Publish));
+    assert!((last.2 - (Utc::now() + Duration::minutes(3))).num_seconds().abs() < 30, "a few minutes to connect");
+    let g = t.auth(&acme, ask("connect", &by_ravi)).await.unwrap().1;
+    assert_eq!((g["root"].as_str(), g["publish"].clone(), g.get("subscribe"), g["revalidate"].as_i64()), (Some(ppath.as_str()), json!(["**"]), None, Some(30)));
+    assert!((g["expires"].as_i64().unwrap() - (Utc::now() + Duration::minutes(60)).timestamp()).abs() < 30, "{g}");
+    // Not another path, not under another key, not in another workspace, not once its minutes to connect are over…
+    let kid = tok.split('.').nth(1).unwrap().to_string();
+    let elsewhere = json!({"event": "connect", "path": path, "token": tok});
+    assert!(no(&t.auth(&acme, elsewhere).await), "another broadcast's path");
+    assert!(no(&t.auth(&acme, json!({"event": "connect", "path": ppath, "token": tok.replacen(&kid, "nokey", 1)})).await), "another key");
+    assert!(no(&t.auth(&other, ask("connect", &by_ravi)).await), "another workspace");
+    let past = (Utc::now() - Duration::minutes(1)).timestamp();
+    let stale = format!("fake.{kid}.publish.{ppath}.{past}.u:{}", ravi.user);
+    assert!(no(&t.auth(&acme, json!({"event": "connect", "path": ppath, "token": stale})).await), "an expired pass opens nothing");
+    // …but a session it opened goes on while its holder keeps the right: the relay asks again long after the pass's minutes.
+    assert!(granted(&t.auth(&acme, json!({"event": "revalidate", "path": ppath, "token": stale})).await));
+    assert_eq!(t.auth(&acme, ask("end", &by_ravi)).await.unwrap(), (200, json!({})));
+    // Viewers: a link's, a member's, a browser's (each pass names its seat as well), each only subscribing.
+    let vl = k.run_action(&asha, "Broadcast", passes, "issue_viewer_link", json!({"label": "Lee"})).await.unwrap();
+    let (_, by_link) = t.watch(&acme, None, passes, json!({"link": vl["secret"], "seat": nonce(700)})).await.unwrap();
+    let (_, by_mira) = t.watch(&acme, Some(&mira), passes, json!({})).await.unwrap();
+    k.update(&asha, "Broadcast", passes, obj(json!({"audience": "Public"})), None).await.unwrap();
+    let (_, by_browser) = t.watch(&acme, None, passes, json!({"seat": nonce(701)})).await.unwrap();
+    for (who, offer) in [("link", &by_link), ("member", &by_mira), ("browser", &by_browser)] {
+        let (_, g) = t.auth(&acme, ask("connect", offer)).await.unwrap_or_else(|e| panic!("{who}: {e}"));
+        assert_eq!((g["subscribe"].clone(), g.get("publish")), (json!(["**"]), None), "{who}");
+    }
+    let pl = k.run_action(&asha, "Broadcast", passes, "issue_publisher_link", json!({"presenter_name": "Pat"})).await.unwrap();
+    let (_, by_guest) = t.post(&acme, None, passes, "publish", json!({"link": pl["secret"]})).await.unwrap();
+    assert!(granted(&t.auth(&acme, ask("connect", &by_guest)).await));
+    // Each loses the right; the relay's next question is refused. (Collected, so one run shows every rule that fails.)
+    let mut wrong = vec![];
+    k.run_action(&asha, "BroadcastLink", uid(&obj(json!({"id": vl["link"]}))), "revoke", Value::Null).await.unwrap();
+    expect(&mut wrong, "a revoked viewing link's session stops", no(&t.auth(&acme, ask("revalidate", &by_link)).await));
+    k.update(&asha, "Broadcast", passes, obj(json!({"audience": "Link"})), None).await.unwrap();
+    expect(&mut wrong, "the open door closed: a browser's session stops", no(&t.auth(&acme, ask("revalidate", &by_browser)).await));
+    k.set_user_roles(&acme.admin, mira.user, &["Live User".to_string()]).await.unwrap();
+    expect(&mut wrong, "a person who may no longer read it stops watching", no(&t.auth(&acme, ask("revalidate", &by_mira)).await));
+    k.set_user_roles(&acme.admin, mira.user, &["Live Manager".to_string()]).await.unwrap();
+    expect(&mut wrong, "given the right back, the same session goes on", granted(&t.auth(&acme, ask("revalidate", &by_mira)).await));
+    k.update(&asha, "Broadcast", passes, obj(json!({"audience": "Public"})), None).await.unwrap();
+    expect(&mut wrong, "the door open again", granted(&t.auth(&acme, ask("revalidate", &by_browser)).await));
+    t.post(&acme, None, passes, "watch/leave", json!({"seat": nonce(701)})).await.unwrap();
+    expect(&mut wrong, "a seat given up holds no session", no(&t.auth(&acme, ask("revalidate", &by_browser)).await));
+    k.update(&asha, "Broadcast", passes, obj(json!({"publishers": []})), None).await.unwrap();
+    expect(&mut wrong, "a presenter taken off the broadcast stops publishing", no(&t.auth(&acme, ask("revalidate", &by_ravi)).await));
+    k.run_action(&asha, "Broadcast", passes, "revoke_links", Value::Null).await.unwrap();
+    expect(&mut wrong, "a revoked presenter link stops publishing", no(&t.auth(&acme, ask("revalidate", &by_guest)).await));
+    t.post(&acme, Some(&asha), passes, "end", Value::Null).await.unwrap();
+    expect(&mut wrong, "the broadcast ended: its viewers stop", no(&t.auth(&acme, ask("revalidate", &by_mira)).await));
+    expect(&mut wrong, "the broadcast ended: nothing connects", no(&t.auth(&acme, ask("connect", &by_mira)).await));
+    assert!(wrong.is_empty(), "rules that do not hold: {wrong:#?}");
+
+    // ───────────── questions and polls: by the seat a viewer watches from ─────────────
+    let qa = t.broadcast(&asha, json!({"title": "Ask me", "audience": "Public"})).await;
+    let qpost = |route: &'static str, body: Value| t.post(&acme, None, qa, route, body);
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "Too early?"})).await, "conflict");
+    t.post(&acme, Some(&asha), qa, "publish", Value::Null).await.unwrap();
+    t.watch(&acme, None, qa, json!({"seat": nonce(820)})).await.unwrap();
+    t.watch(&acme, None, qa, json!({"seat": nonce(821)})).await.unwrap();
+    refused(qpost("ask", json!({"seat": nonce(829), "text": "No seat?"})).await, "forbidden");
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "  "})).await, "invalid");
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "x".repeat(501)})).await, "invalid");
+    let (_, asked) = qpost("ask", json!({"seat": nonce(820), "text": "When is the next one?", "name": "Lee"})).await.unwrap();
+    assert_eq!(asked["status"], "Waiting");
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "And again?"})).await, "conflict");
+    let (_, other_q) = qpost("ask", json!({"seat": nonce(821), "text": "Is it recorded?"})).await.unwrap();
+    let (_, feed) = qpost("feed", json!({"seat": nonce(821)})).await.unwrap();
+    assert_eq!((feed["questions"].clone(), feed["poll"].clone()), (json!([]), Value::Null), "waiting questions reach nobody");
+    // The presenter's side: the broadcast's actions; someone who may not change the broadcast cannot.
+    let listed = k.run_action(&asha, "Broadcast", qa, "questions", Value::Null).await.unwrap();
+    assert_eq!(listed["questions"].as_array().unwrap().len(), 2);
+    assert!(k.run_action(&ravi, "Broadcast", qa, "moderate_question", json!({"question": asked["question"], "to": "Shown"})).await.is_err());
+    k.run_action(&asha, "Broadcast", qa, "moderate_question", json!({"question": asked["question"], "to": "Shown"})).await.unwrap();
+    k.run_action(&asha, "Broadcast", qa, "moderate_question", json!({"question": other_q["question"], "to": "Hidden"})).await.unwrap();
+    refused(k.run_action(&asha, "Broadcast", qa, "moderate_question", json!({"question": other_q["question"], "to": "Shown"})).await, "invalid");
+    let elsewhere = k.run_action(&asha, "Broadcast", passes, "moderate_question", json!({"question": asked["question"], "to": "Answered"})).await;
+    assert!(elsewhere.is_err(), "a question is moderated on its own broadcast only");
+    let (_, feed) = qpost("feed", json!({"seat": nonce(820)})).await.unwrap();
+    assert_eq!(feed["questions"], json!([{"id": asked["question"], "text": "When is the next one?", "name": "Lee", "status": "Shown"}]));
+    // A poll: each seat votes once; a second vote changes nothing; a closed poll takes none.
+    refused(k.run_action(&asha, "Broadcast", qa, "open_poll", json!({"question": "Which?", "options": "Only one"})).await, "invalid");
+    let poll = k.run_action(&asha, "Broadcast", qa, "open_poll", json!({"question": "Which day?", "options": "Monday\nFriday\n"})).await.unwrap();
+    let pid = poll["poll"].clone();
+    assert_eq!(qpost("vote", json!({"seat": nonce(820), "poll": pid, "option": 1})).await.unwrap().1["counted"], true);
+    assert_eq!(qpost("vote", json!({"seat": nonce(820), "poll": pid, "option": 0})).await.unwrap().1["counted"], false);
+    assert_eq!(qpost("vote", json!({"seat": nonce(821), "poll": pid, "option": 1})).await.unwrap().1["counted"], true);
+    refused(qpost("vote", json!({"seat": nonce(821), "poll": pid, "option": 2})).await, "invalid");
+    refused(qpost("vote", json!({"seat": nonce(829), "poll": pid, "option": 0})).await, "forbidden");
+    let (_, feed) = qpost("feed", json!({"seat": nonce(820)})).await.unwrap();
+    assert_eq!(
+        (feed["poll"]["options"].clone(), feed["poll"]["counts"].clone(), feed["poll"]["mine"].clone()),
+        (json!(["Monday", "Friday"]), json!([0, 2]), json!(1))
+    );
+    assert_eq!(
+        t.scalar::<i64>(&acme, "select count(*) from live_poll_vote where tenant_id = $1 and poll = $2", Uuid::parse_str(pid.as_str().unwrap()).unwrap()).await,
+        2
+    );
+    k.run_action(&asha, "Broadcast", qa, "close_poll", json!({"poll": pid})).await.unwrap();
+    refused(qpost("vote", json!({"seat": nonce(821), "poll": pid, "option": 0})).await, "conflict");
+    // Ended: nobody asks; past the retention days what viewers wrote and voted goes.
+    t.post(&acme, Some(&asha), qa, "end", Value::Null).await.unwrap();
+    refused(qpost("ask", json!({"seat": nonce(820), "text": "Still there?"})).await, "conflict");
+    t.sql(&acme, "update e_broadcast set ended_at = now() - interval '40 days' where tenant_id = $1 and id = $2", qa).await;
+    ferrum_app_live::maintenance(&k, acme.id).await.unwrap();
+    for table in ["e_broadcast_question", "e_broadcast_poll"] {
+        let n: i64 = t.scalar(&acme, &format!("select count(*) from {table} where tenant_id = $1 and broadcast = $2"), qa).await;
+        assert_eq!(n, 0, "{table}");
+    }
+
+    // ───────────── presenting and watching as operations, for signed-in people and their agents ─────────────
+    let gated = t.broadcast(&asha, json!({"title": "Through the gate", "audience": "Members"})).await;
+    let op = |name: &str, key: &str| {
+        ferrum_kernel::capability::Invocation::new(format!("live.broadcast.{name}"), json!({"id": gated.to_string(), "params": {}})).key(key)
+    };
+    assert!(k.invoke(&ravi, op("present", "gate-1")).await.is_err(), "not his broadcast");
+    assert!(k.invoke(&mira, op("present", "gate-2")).await.is_err(), "a manager who is not a presenter does not present");
+    let started = k.invoke(&asha, op("present", "gate-3")).await.unwrap();
+    assert_eq!(started.result["status"], "Live");
+    assert!(started.result["token"].as_str().unwrap().ends_with(&format!(".u:{}", asha.user)), "{:?}", started.result);
+    assert_eq!(t.get(&asha, gated).await["status"], "Live");
+    // The pass is given once: a repeat under the same key does not hand it out again.
+    let again = k.invoke(&asha, op("present", "gate-3")).await.unwrap();
+    assert!(again.repeated && again.result.get("token").is_none() && again.answered_once.is_some(), "{again:?}");
+    let seat = k.invoke(&mira, op("watch", "gate-4")).await.unwrap();
+    assert!(seat.result["token"].as_str().unwrap().contains(&format!(".u:{}:", mira.user)), "{:?}", seat.result);
+    assert!(t.auth(&acme, json!({"event": "connect", "path": seat.result["path"], "token": seat.result["token"]})).await.is_ok());
+    assert!(k.invoke(&nobody, op("watch", "gate-5")).await.is_err(), "no right to read it, no seat");
+    k.run_action(&asha, "Broadcast", gated, "end", Value::Null).await.unwrap();
+    let over = k.invoke(&mira, op("watch", "gate-6")).await.unwrap();
+    assert_eq!((over.result["status"].as_str(), over.result.get("token")), (Some("Ended"), None));
+
     // ───────────── keys in the vault (src/keys.rs) ─────────────
     let scope = ferrum_kernel::vault::Scope::Workspace(acme.id);
     // The relay's key has one home: Live's secret in the vault, the key as it was given (what the relay's key directory
@@ -624,7 +816,18 @@ async fn scenario() {
     let held = live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().expect("the relay's key");
     assert!(held.rule.reveal && held.version == 1, "the relay holds the same secret: {held:?}");
     assert_eq!(&*live_vault.reveal(&k, scope, "relay-signing-key").await.unwrap(), b"key-1");
+    // Sessions opened before a new key keep going: the relay's next questions about them are answered under the key
+    // before it. A pass signed with that key opens nothing new.
+    let turning = t.broadcast(&asha, json!({"title": "Turning", "audience": "Public"})).await;
+    let (_, old_publish) = t.post(&acme, Some(&asha), turning, "publish", Value::Null).await.unwrap();
+    let (_, old_watch) = t.watch(&acme, None, turning, json!({"seat": nonce(950)})).await.unwrap();
     k.run_action(&mira, "LiveSettings", set, "set_signing_key", json!({"key": "key-2"})).await.unwrap();
+    for offer in [&old_publish, &old_watch] {
+        let again = json!({"event": "revalidate", "path": offer["path"], "token": offer["token"]});
+        assert!(matches!(t.auth(&acme, again).await, Ok((200, _))), "{offer}");
+        let open = json!({"event": "connect", "path": offer["path"], "token": offer["token"]});
+        refused(t.auth(&acme, open).await, "forbidden");
+    }
     assert_eq!(live_vault.describe(&k, scope, "relay-signing-key").await.unwrap().map(|d| d.version), Some(2));
     assert_eq!(k.get(&mira, "LiveSettings", set, false).await.unwrap()["signing_key_id"], "key-2");
     // A new version of Live's own key leaves the relay's key as it was: tokens are signed with it as before.

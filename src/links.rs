@@ -58,6 +58,22 @@ pub async fn find(tx: &mut Tx, tenant: Uuid, broadcast: Uuid, kind: &str, secret
     Ok(row.map(|(id, presenter_name, presenter_email, used_at)| LinkRow { id, presenter_name, presenter_email, used_at }))
 }
 
+/// The working link of `kind` with this id, for this broadcast: what a pass names (`find` is for its secret).
+pub async fn by_id(tx: &mut Tx, tenant: Uuid, broadcast: Uuid, kind: &str, link: Uuid) -> Result<Option<LinkRow>> {
+    type Row = (Uuid, Option<String>, Option<String>, Option<DateTime<Utc>>);
+    let row: Option<Row> = sqlx::query_as(
+        "select id, presenter_name, presenter_email, used_at from e_broadcast_link \
+         where tenant_id = $1 and id = $2 and broadcast = $3 and kind = $4 and revoked_at is null and expires_at > now()",
+    )
+    .bind(tenant)
+    .bind(link)
+    .bind(broadcast)
+    .bind(kind)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(row.map(|(id, presenter_name, presenter_email, used_at)| LinkRow { id, presenter_name, presenter_email, used_at }))
+}
+
 /// The address a link is sent at, from the workspace's public address; `None` when the server knows no address.
 async fn address(k: &Kernel, tx: &mut Tx, tenant: Uuid, page: &str, broadcast: Uuid, secret: &str) -> Result<Option<String>> {
     let Some(base) = k.link_base(tenant).await else { return Ok(None) };

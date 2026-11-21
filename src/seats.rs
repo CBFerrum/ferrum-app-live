@@ -46,6 +46,19 @@ pub async fn live(tx: &mut Tx, tenant: Uuid, broadcast: Uuid, window: i64) -> Re
         .await?)
 }
 
+/// Whether `seat` is live within `window` seconds.
+pub async fn held(tx: &mut Tx, tenant: Uuid, broadcast: Uuid, seat: &str, window: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "select exists (select 1 from live_seat where tenant_id = $1 and broadcast = $2 and seat = $3 and seen_at > now() - make_interval(secs => $4::float8))",
+    )
+    .bind(tenant)
+    .bind(broadcast)
+    .bind(seat)
+    .bind(window as f64)
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
 /// Renews a live seat, if `seat` is one.
 pub async fn renew(tx: &mut Tx, tenant: Uuid, broadcast: Uuid, seat: &str, window: i64) -> Result<bool> {
     let n = sqlx::query(

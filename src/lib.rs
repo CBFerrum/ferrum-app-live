@@ -17,6 +17,7 @@ mod keys;
 mod links;
 mod module;
 mod page;
+mod qa;
 pub mod relay;
 mod reports;
 mod seats;
@@ -56,7 +57,7 @@ pub fn register_with(hooks: &mut HookRegistry, relay: Arc<dyn relay::Relay>) {
     keys::remember(hooks.vault());
     hooks
         .register("LiveSettings", Arc::new(settings::SettingsHook { relay: relay.clone() }))
-        .register("Broadcast", Arc::new(broadcast::BroadcastHook))
+        .register("Broadcast", Arc::new(broadcast::BroadcastHook { relay: relay.clone() }))
         .register("BroadcastLink", Arc::new(links::LinkHook))
         .add_health(PACKAGE, Arc::new(health::RelayHealth { relay: relay.clone() }))
         .add_site(PACKAGE, Arc::new(site::LiveSite { relay }));

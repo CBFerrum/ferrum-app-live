@@ -77,7 +77,10 @@ verifies a token itself: the reference auth server `moq auth serve` does**, and 
 * The session's root is the path the client dialed (`https://relay/{root}?jwt=...`); a token for root `r` is
   authorised at a dialed path that equals `r`, extends it (narrowing) or is a parent of it; an unrelated path is
   refused. **Live signs `root = {prefix}/{workspace}/{broadcast}` with `publish: ["**"]` (presenter) or
-  `subscribe: ["**"]` (viewer) and an `exp`, and nothing else**; the client dials exactly that path.
+  `subscribe: ["**"]` (viewer), an `exp` three minutes on and a `sub` naming the holder (read and ignored by moq's own
+  server), and nothing else**; the client dials exactly that path. Since 0.5.0 Live itself is the relay's auth server
+  (`/relay/auth`): it answers `connect` and `revalidate` with `{root, publish|subscribe, expires, revalidate: 30}` while
+  the holder's right holds, and 403 otherwise (docs/deploy.md).
 * **Interop vector.** `src/relay.rs` has a test that verifies the HS256 token `@moq/auth` (JavaScript) signed
   in moq's own test suite (`rs/moq-auth/src/key.rs`, `JS_HS256_TOKEN`) with this app's verifier, which proves
   the header, the unpadded base64url and the signature are the same.
